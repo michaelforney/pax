@@ -1,0 +1,3 @@
+.POSIX:
+
+all: pax
