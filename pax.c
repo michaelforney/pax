@@ -339,12 +339,6 @@ readpax(FILE *f, struct header *h)
 	}
 }
 
-static int
-readhdr(FILE *f, struct header *h)
-{
-
-}
-
 static void
 usage(void)
 {
