@@ -334,7 +334,7 @@ readpax(FILE *f, struct header *h)
 			readexthdr(f, &local, h->size);
 			break;
 		default:
-			
+			return 1;
 		}
 	}
 }
