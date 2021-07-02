@@ -137,12 +137,12 @@ skip(FILE *f, size_t len)
 static unsigned long long
 octnum(char *str, size_t len)
 {
-	char c;
+	int c;
 	unsigned long long n;
 
 	n = 0;
 	while (len > 0) {
-		c = *str;
+		c = (unsigned)*str;
 		if (c == ' ' || c == '\0')
 			break;
 		if (c < '0' || c > '7')
@@ -153,6 +153,28 @@ octnum(char *str, size_t len)
 	}
 	if (len == 0)
 		fatal("invalid ustar number field: missing terminator");
+	return n;
+}
+
+static unsigned long long
+decnum(char *str, size_t len, char **end)
+{
+	int c;
+	unsigned long long n;
+
+	n = 0;
+	while (len > 0) {
+		c = (unsigned)*str;
+		if (c == ' ')
+			break;
+		if (c < '0' || c > '9')
+			fatal("invalid extended header number");
+		n = n * 10 + (c - '0');
+		++str;
+		--len;
+	}
+	if (end)
+		*end = str;
 	return n;
 }
 
@@ -308,42 +330,43 @@ extkeyval(struct header *h, const char *key, const char *val, size_t vallen)
 static void
 readexthdr(FILE *f, struct header *h, size_t len)
 {
-	static char *rec = NULL;
-	static size_t reccap = 0;
-	size_t reclen, vallen, off, pad;
-	char *key, *val;
+	static char *buf = NULL;
+	static size_t buflen = 0;
+	size_t reclen, vallen, pad;
+	char *rec, *end, *key, *val;
 
-	pad = ((len + 511) & ~511) - len;
-	while (len > 0) {
-		if (fscanf(f, "%zu %zn", &reclen, &off) != 1)
-			fatal("invalid extended header: invalid record");
-		if (reclen <= off || reclen > len)
-			fatal("invalid extended header: record has invalid length");
-		len -= reclen;
-		reclen -= off;
-		if (reccap < reclen) {
-			rec = realloc(rec, reclen);
-			if (!rec)
-				fatal(NULL);
-			reccap = reclen;
-		}
-		if (fread(rec, 1, reclen, f) != reclen) {
-			if (ferror(f))
-				fatal("read:");
-			fatal("archive truncated");
-		}
-		key = rec;
-		val = strchr(rec, '=');
-		if (!val)
-			fatal("invalid extended header: record has no '='", rec);
-		*val++ = '\0';
-		vallen = reclen - (val - rec) - 1;
-		if (val[vallen] != '\n')
-			fatal("invalid extended header: record is missing newline");
-		val[vallen] = '\0';
-		extkeyval(h, key, val, vallen);
+	pad = ((len + 511) & ~511);
+	if (buflen < len) {
+		buflen = (pad + 8191) & ~8191;
+		free(buf);
+		buf = malloc(buflen);
+		if (!buf)
+			fatal(NULL);
 	}
-	skip(f, pad);
+	if (fread(buf, 1, pad, stdin) != pad) {
+		if (ferror(f))
+			fatal("read:");
+		fatal("archive truncated");
+	}
+	rec = buf;
+	while (len > 0) {
+		end = memchr(rec, '\n', len);
+		if (!end)
+			fatal("invalid extended header: record is missing newline");
+		*end = '\0';
+		reclen = decnum(rec, end - rec, &key);
+		if (*key != ' ' || reclen != end - rec + 1)
+			fatal("invalid extended header: invalid record");
+		++key;
+		val = strchr(key, '=');
+		if (!val)
+			fatal("invalid extended header: record has no '='");
+		*val++ = '\0';
+		vallen = end - val;
+		extkeyval(h, key, val, vallen);
+		len -= reclen;
+		rec += reclen;
+	}
 }
 
 static int
