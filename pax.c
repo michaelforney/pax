@@ -81,7 +81,6 @@ static struct {
 static const char *exthdr_name;
 static const char *globexthdr_name;
 static struct header exthdr, globexthdr;
-static struct replstr *repl;
 static time_t curtime;
 
 static void
@@ -469,6 +468,8 @@ parseopts(char *s)
 			if (val)
 				fatal("option 'times' should not have a value");
 		} else {
+			(void)ext;
+			/* XXX: need to handle := */
 			extkeyval(&globexthdr, key, val, s - val);
 		}
 	}
