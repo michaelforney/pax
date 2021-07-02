@@ -181,7 +181,7 @@ readustar(FILE *f, struct header *h)
 		if (namelen == 100 || prefixlen > 0) {
 			h->name = malloc(namelen + prefixlen + 2);
 			if (!h->name)
-				fatal("malloc:");
+				fatal(NULL);
 			memcpy(h->name, buf, namelen);
 			h->name[namelen] = '\0';
 			memcpy(h->name + namelen + 1, buf + 345, prefixlen);
@@ -192,7 +192,10 @@ readustar(FILE *f, struct header *h)
 	}
 
 	h->mode = octnum(buf + 100, 8);
+	h->uid = octnum(buf + 108, 8);
+	h->gid = octnum(buf + 116, 8);
 	h->size = octnum(buf + 124, 12);
+	h->mtime = octnum(buf + 136, 12);
 	h->type = buf[156];
 	
 	if (!h->linkname) {
@@ -200,7 +203,7 @@ readustar(FILE *f, struct header *h)
 		if (linklen == 100) {
 			h->linkname = malloc(linklen + 1);
 			if (!h->linkname)
-				fatal("malloc:");
+				fatal(NULL);
 			memcpy(h->linkname, buf + 157, linklen);
 			h->linkname[linklen] = '\0';
 		}
