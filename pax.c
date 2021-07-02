@@ -334,7 +334,7 @@ readexthdr(FILE *f, struct header *h, size_t len)
 		if (val[vallen] != '\n')
 			fatal("invalid extended header: record is missing newline");
 		val[vallen] = '\0';
-		//extkeyval
+		extkeyval(h, key, val, vallen);
 	}
 	skip(f, pad);
 }
@@ -439,7 +439,7 @@ parseopts(char *s)
 			if (val)
 				fatal("option 'times' should not have a value");
 		} else {
-			//extkeyval(key, val);
+			extkeyval(&global, key, val, s - val);
 		}
 	}
 }
