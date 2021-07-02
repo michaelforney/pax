@@ -318,7 +318,7 @@ extkeyval(struct header *h, const char *key, const char *val, size_t vallen)
 		parsetime(&h->ctime, "ctime", val, vallen);
 		h->fields |= CTIME;
 	} else if (strcmp(key, "gid") == 0) {
-		h->gid = strtoul(val, &end, 10);
+		h->gid = decnum(val, vallen, &end);
 		if (end != val + vallen)
 			fatal("invalid extnded header: bad gid");
 		h->fields |= GID;
@@ -343,12 +343,12 @@ extkeyval(struct header *h, const char *key, const char *val, size_t vallen)
 	} else if (strncmp(key, "realtime.", 9) == 0) {
 	} else if (strncmp(key, "security.", 9) == 0) {
 	} else if (strcmp(key, "size") == 0) {
-		h->size = strtoull(val, &end, 10);
+		h->size = decnum(val, vallen, &end);
 		if (end != val + vallen)
 			fatal("invalid extended header: bad size");
 		h->fields |= SIZE;
 	} else if (strcmp(key, "uid") == 0) {
-		h->uid = strtoul(val, &end, 10);
+		h->uid = decnum(val, vallen, &end);
 		if (end != val + vallen)
 			fatal("invalid extnded header: bad uid");
 		h->fields |= UID;
