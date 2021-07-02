@@ -70,6 +70,7 @@ static int follow;
 static struct {
 	enum field delete;
 	int linkdata;
+	const char *listopt;
 } opt;
 static const char *exthdr_name;
 static const char *globexthdr_name;
@@ -414,7 +415,7 @@ parseopts(char *s)
 				fatal("option 'linkdata' should not have a value");
 			opt.linkdata = 1;
 		} else if (strcmp(key, "listopt") == 0) {
-			fatal("option 'listopt' not implemented");
+			opt.listopt = val;
 		} else if (strcmp(key, "times") == 0) {
 			if (val)
 				fatal("option 'times' should not have a value");
@@ -534,7 +535,9 @@ main(int argc, char *argv[])
 		for (;;) {
 			if (readhdr(stdin, &hdr) == 0)
 				break;
-			if (vflag) {
+			if (opt.listopt) {
+				fatal("listopt is not supported");
+			} else if (vflag) {
 			} else {
 				printf("%s\n", hdr.name);
 			}
