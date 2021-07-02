@@ -284,7 +284,7 @@ readexthdr(FILE *f, struct header *h, size_t len)
 	size_t reclen, vallen, off, pad;
 	char *key, *val;
 
-	pad = 512 - len % 512;
+	pad = ((len + 511) & ~511) - len;
 	while (len > 0) {
 		if (fscanf(f, "%zu %zn", &reclen, &off) != 1)
 			fatal("invalid extended header: invalid record");
@@ -535,7 +535,7 @@ main(int argc, char *argv[])
 			} else {
 				printf("%s\n", hdr.name);
 			}
-			skip(stdin, hdr.size + 512 - hdr.size % 512);
+			skip(stdin, (hdr.size + 511) & ~511);
 		}
 		break;
 	case READ:
