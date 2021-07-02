@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#include <assert.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -6,12 +7,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <fcntl.h>
 #include <fnmatch.h>
 #include <grp.h>
 #include <pwd.h>
 #include <regex.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 #ifndef makedev
 #include <sys/sysmacros.h>
 #endif
@@ -43,6 +46,16 @@ enum field {
 	SIZE     = 1<<7,
 	UID      = 1<<8,
 	UNAME    = 1<<9,
+};
+
+enum type {
+	REG = '0',
+	LNK = '1',
+	SYM = '2',
+	CHR = '3',
+	BLK = '4',
+	DIR = '5',
+	PIP = '6',
 };
 
 struct header {
@@ -522,11 +535,11 @@ list(struct header *h)
 
 	memset(mode, '-', sizeof(mode) - 1);
 	switch (h->type) {
-	case '2': mode[0] = 'l'; break;
-	case '3': mode[0] = 'c'; break;
-	case '4': mode[0] = 'b'; break;
-	case '5': mode[0] = 'd'; break;
-	case '6': mode[0] = 'p'; break;
+	case SYM: mode[0] = 'l'; break;
+	case CHR: mode[0] = 'c'; break;
+	case BLK: mode[0] = 'b'; break;
+	case DIR: mode[0] = 'd'; break;
+	case PIP: mode[0] = 'p'; break;
 	}
 	if (h->mode & S_IRUSR) mode[1] = 'r';
 	if (h->mode & S_IWUSR) mode[2] = 'w';
@@ -563,6 +576,69 @@ list(struct header *h)
 	if (h->type == '1')
 		printf(" == %s", h->linkname);
 	putchar('\n');
+}
+
+static void
+copyblock(char *buf, FILE *r, size_t nr, int w, size_t nw)
+{
+	ssize_t ret;
+
+	assert(nw <= nr);
+	if (fread(buf, 1, nr, r) != nr) {
+		if (ferror(r))
+			fatal("read:");
+		fatal("archive truncated");
+	}
+	while (nw > 0) {
+		ret = write(w, buf, nw);
+		if (ret < 0)
+			fatal("write:");
+		if (ret == 0)
+			fatal("write returned 0");
+		buf += ret;
+		nw -= ret;
+	}
+}
+
+static void
+extract(struct header *h)
+{
+	int fd;
+	char buf[8192];
+	size_t len, pad;
+
+	switch (h->type) {
+	case 0:
+	case REG:
+		fd = open(h->name, O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, h->mode);
+		if (fd < 0)
+			fatal("open %s:", h->name);
+		len = h->size;
+		pad = ((len + 511) & ~511) - len;
+		for (len = h->size; len > sizeof(buf); len -= sizeof(buf))
+			copyblock(buf, stdin, sizeof(buf), fd, sizeof(buf));
+		copyblock(buf, stdin, len + pad, fd, len);
+		close(fd);
+		break;
+	case LNK:
+		if (link(h->linkname, h->name) != 0)
+			fatal("link %s:", h->name);
+		break;
+	case SYM:
+		if (symlink(h->linkname, h->name) != 0)
+			fatal("symlink %s:", h->name);
+		break;
+	case DIR:
+		if (mkdir(h->name, h->mode) != 0)
+			fatal("mkdir %s:", h->name);
+		break;
+	case PIP:
+		if (mkfifo(h->name, h->mode) != 0)
+			fatal("mkfifo %s:", h->name);
+		break;
+	}
+	if (h->type != REG)
+		skip(stdin, (h->size + 511) & ~511);
 }
 
 int
@@ -673,6 +749,7 @@ main(int argc, char *argv[])
 	curtime = time(NULL);
 	if (curtime == (time_t)-1)
 		fatal("time:");
+	umask(0);
 
 	switch (mode) {
 	case LIST:
@@ -687,6 +764,8 @@ main(int argc, char *argv[])
 		}
 		break;
 	case READ:
+		while (readhdr(stdin, &hdr))
+			extract(&hdr);
 		break;
 	case WRITE:
 		break;
