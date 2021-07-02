@@ -34,17 +34,19 @@ enum format {
 
 enum field {
 	ATIME    = 1<<0,
-	GID      = 1<<1,
-	GNAME    = 1<<2,
-	LINKPATH = 1<<3,
-	MTIME    = 1<<4,
-	PATH     = 1<<5,
-	SIZE     = 1<<6,
-	UID      = 1<<7,
-	UNAME    = 1<<8,
+	CTIME    = 1<<1,
+	GID      = 1<<2,
+	GNAME    = 1<<3,
+	LINKPATH = 1<<4,
+	MTIME    = 1<<5,
+	PATH     = 1<<6,
+	SIZE     = 1<<7,
+	UID      = 1<<8,
+	UNAME    = 1<<9,
 };
 
 struct header {
+	enum field fields;
 	char *name;
 	mode_t mode;
 	uid_t uid;
@@ -202,9 +204,9 @@ readustar(FILE *f, struct header *h)
 	chksum = octnum(buf + 148, 8);
 	if (sum != chksum)
 		fatal("bad checksum: %lu != %lu", sum, chksum);
-	if (exthdr.name) {
+	if (exthdr.fields & PATH) {
 		h->name = exthdr.name;
-	} else if (globexthdr.name) {
+	} else if (globexthdr.fields & PATH) {
 		h->name = globexthdr.name;
 	} else {
 		namelen = strnlen(buf, 100);
@@ -223,16 +225,23 @@ readustar(FILE *f, struct header *h)
 	}
 
 	h->mode = octnum(buf + 100, 8);
-	h->uid = octnum(buf + 108, 8);
-	h->gid = octnum(buf + 116, 8);
-	h->size = octnum(buf + 124, 12);
-	h->mtime.tv_sec = octnum(buf + 136, 12);
-	h->mtime.tv_nsec = 0;
+	h->uid = exthdr.fields & UID ? exthdr.uid :
+	         globexthdr.fields & UID ? globexthdr.uid :
+	         octnum(buf + 108, 8);
+	h->gid = exthdr.fields & GID ? exthdr.gid :
+	         globexthdr.fields & GID ? globexthdr.gid :
+	         octnum(buf + 116, 8);
+	h->size = exthdr.fields & SIZE ? exthdr.size :
+	          globexthdr.fields & SIZE ? globexthdr.size :
+	          octnum(buf + 124, 12);
+	h->mtime = exthdr.fields & MTIME ? exthdr.mtime :
+	           globexthdr.fields & MTIME ? globexthdr.mtime :
+	           (struct timespec){.tv_sec = octnum(buf + 136, 12)};
 	h->type = buf[156];
 	
-	if (exthdr.linkname) {
+	if (exthdr.fields & LINKPATH) {
 		h->linkname = exthdr.linkname;
-	} else if (globexthdr.linkname) {
+	} else if (globexthdr.fields & LINKPATH) {
 		h->linkname = globexthdr.linkname;
 	} else {
 		linklen = strnlen(buf + 157, 100);
@@ -246,18 +255,18 @@ readustar(FILE *f, struct header *h)
 			h->linkname = buf + 157;
 		}
 	}
-	if (exthdr.uname) {
+	if (exthdr.fields & UNAME) {
 		h->uname = exthdr.uname;
-	} else if (globexthdr.uname) {
+	} else if (globexthdr.fields & UNAME) {
 		h->uname = globexthdr.uname;
 	} else {
 		h->uname = buf + 265;
 		if (!memchr(h->uname, '\0', 32))
 			fatal("uname is not NUL-terminated");
 	}
-	if (exthdr.gname) {
+	if (exthdr.fields & GNAME) {
 		h->gname = exthdr.gname;
-	} else if (globexthdr.gname) {
+	} else if (globexthdr.fields & GNAME) {
 		h->gname = globexthdr.gname;
 	} else {
 		h->gname = buf + 297;
@@ -300,44 +309,53 @@ extkeyval(struct header *h, const char *key, const char *val, size_t vallen)
 
 	if (strcmp(key, "atime") == 0) {
 		parsetime(&h->atime, "atime", val, vallen);
+		h->fields |= ATIME;
 	} else if (strcmp(key, "charset") == 0) {
 	} else if (strcmp(key, "comment") == 0) {
 		/* ignore */
 	} else if (strcmp(key, "ctime") == 0) {
 		parsetime(&h->ctime, "ctime", val, vallen);
+		h->fields |= CTIME;
 	} else if (strcmp(key, "gid") == 0) {
 		h->gid = strtoul(val, &end, 10);
 		if (end != val + vallen)
 			fatal("invalid extnded header: bad gid");
+		h->fields |= GID;
 	} else if (strcmp(key, "gname") == 0) {
 		h->gname = memdup(val, vallen);
 		if (!h->gname)
 			fatal(NULL);
+		h->fields |= GNAME;
 	} else if (strcmp(key, "hdrcharset") == 0) {
 	} else if (strcmp(key, "linkpath") == 0) {
 		h->linkname = memdup(val, vallen);
 		if (!h->linkname)
 			fatal(NULL);
+		h->fields |= LINKPATH;
 	} else if (strcmp(key, "mtime") == 0) {
 		parsetime(&h->mtime, "mtime", val, vallen);
 	} else if (strcmp(key, "path") == 0) {
 		h->name = memdup(val, vallen);
 		if (!h->name)
 			fatal(NULL);
+		h->fields |= PATH;
 	} else if (strncmp(key, "realtime.", 9) == 0) {
 	} else if (strncmp(key, "security.", 9) == 0) {
 	} else if (strcmp(key, "size") == 0) {
 		h->size = strtoull(val, &end, 10);
 		if (end != val + vallen)
 			fatal("invalid extended header: bad size");
+		h->fields |= SIZE;
 	} else if (strcmp(key, "uid") == 0) {
 		h->uid = strtoul(val, &end, 10);
 		if (end != val + vallen)
 			fatal("invalid extnded header: bad uid");
+		h->fields |= UID;
 	} else if (strcmp(key, "uname") == 0) {
 		h->uname = memdup(val, vallen);
 		if (!h->uname)
 			fatal(NULL);
+		h->fields |= UNAME;
 	} else {
 		fprintf(stderr, "ignoring unknown keyword '%s'\n", key);
 	}
