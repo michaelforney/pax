@@ -191,11 +191,8 @@ readustar(FILE *f, struct header *h)
 		}
 	}
 
-	buf[107] = '\0';
-	h->mode = strtoul(buf + 100, &end, 8);
-
+	h->mode = octnum(buf + 100, 8);
 	h->size = octnum(buf + 124, 12);
-
 	h->type = buf[156];
 	
 	if (!h->linkname) {
