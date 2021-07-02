@@ -206,6 +206,8 @@ readustar(FILE *f, struct header *h)
 				fatal(NULL);
 			memcpy(h->linkname, buf + 157, linklen);
 			h->linkname[linklen] = '\0';
+		} else {
+			h->linkname = buf + 157;
 		}
 	}
 	h->uname = buf + 265;
