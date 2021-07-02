@@ -145,7 +145,7 @@ octnum(char *str, size_t len)
 		c = *str;
 		if (c == ' ' || c == '\0')
 			break;
-		if (c < '0' || c > '8')
+		if (c < '0' || c > '7')
 			fatal("invalid ustar number field");
 		n = n * 8 + (c - '0');
 		++str;
