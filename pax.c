@@ -182,7 +182,6 @@ readustar(FILE *f, struct header *h)
 {
 	static char buf[512];
 	size_t namelen, prefixlen, linklen;
-	unsigned major, minor;
 	unsigned long sum, chksum;
 	int zero;
 	size_t i;
@@ -274,6 +273,8 @@ readustar(FILE *f, struct header *h)
 			fatal("gname is not NUL-terminated");
 	}
 	if (h->type == '3' || h->type == '4') {
+		unsigned major, minor;
+
 		major = octnum(buf + 329, 8);
 		minor = octnum(buf + 337, 8);
 		h->dev = makedev(major, minor);
@@ -675,16 +676,13 @@ main(int argc, char *argv[])
 
 	switch (mode) {
 	case LIST:
-		for (;;) {
-			if (readhdr(stdin, &hdr) == 0)
-				break;
-			if (opt.listopt) {
+		while (readhdr(stdin, &hdr)) {
+			if (opt.listopt)
 				fatal("listopt is not supported");
-			} else if (vflag) {
+			else if (vflag)
 				list(&hdr);
-			} else {
+			else
 				printf("%s\n", hdr.name);
-			}
 			skip(stdin, (hdr.size + 511) & ~511);
 		}
 		break;
