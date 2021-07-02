@@ -430,7 +430,7 @@ main(int argc, char *argv[])
 	const char *name = NULL, *arg;
 	enum mode mode = LIST;
 	struct header hdr;
-	void (*readhdr)(FILE *, struct header *);
+	int (*readhdr)(FILE *, struct header *) = readpax;
 
 	ARGBEGIN {
 	case 'a':
@@ -505,9 +505,12 @@ main(int argc, char *argv[])
 		break;
 	case 'x':
 		arg = EARGF(usage());
-		if (strcmp(arg, "cpio") == 0) {
-			
-		}
+		if (strcmp(arg, "ustar") == 0)
+			readhdr = readustar;
+		else if (strcmp(arg, "pax") == 0)
+			readhdr = readpax;
+		else
+			fatal("unsupported archive format '%s'", arg);
 		break;
 	case 'X':
 		Xflag = 1;
@@ -529,7 +532,7 @@ main(int argc, char *argv[])
 	switch (mode) {
 	case LIST:
 		for (;;) {
-			if (readpax(stdin, &hdr) == 0)
+			if (readhdr(stdin, &hdr) == 0)
 				break;
 			if (vflag) {
 			} else {
