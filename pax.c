@@ -50,7 +50,7 @@ struct header {
 	uid_t uid;
 	gid_t gid;
 	off_t size;
-	time_t atime, mtime;
+	struct timespec atime, mtime, ctime;
 	char type;
 	char *linkname;
 	char *uname;
@@ -156,7 +156,7 @@ octnum(char *str, size_t len)
 }
 
 static unsigned long long
-decnum(char *str, size_t len, char **end)
+decnum(const char *str, size_t len, char **end)
 {
 	int c;
 	unsigned long long n;
@@ -164,16 +164,14 @@ decnum(char *str, size_t len, char **end)
 	n = 0;
 	while (len > 0) {
 		c = (unsigned)*str;
-		if (c == ' ')
-			break;
 		if (c < '0' || c > '9')
-			fatal("invalid extended header number");
+			break;
 		n = n * 10 + (c - '0');
 		++str;
 		--len;
 	}
 	if (end)
-		*end = str;
+		*end = (char *)str;
 	return n;
 }
 
@@ -228,7 +226,8 @@ readustar(FILE *f, struct header *h)
 	h->uid = octnum(buf + 108, 8);
 	h->gid = octnum(buf + 116, 8);
 	h->size = octnum(buf + 124, 12);
-	h->mtime = octnum(buf + 136, 12);
+	h->mtime.tv_sec = octnum(buf + 136, 12);
+	h->mtime.tv_nsec = 0;
 	h->type = buf[156];
 	
 	if (exthdr.linkname) {
@@ -275,17 +274,37 @@ readustar(FILE *f, struct header *h)
 }
 
 static void
+parsetime(struct timespec *ts, const char *field, const char *str, size_t len)
+{
+	const char *end = str + len;
+	char *pos;
+	unsigned long long subsec;
+	size_t sublen;
+
+	ts->tv_sec = decnum(str, len, &pos);
+	if (*pos == '.') {
+		str = ++pos;
+		subsec = decnum(str, end - str, &pos);
+		for (sublen = pos - str; sublen < 9; ++sublen)
+			subsec *= 10;
+		ts->tv_nsec = subsec % 1000000000;
+	}
+	if (pos != end)
+		fatal("invalid extended header: bad %s", field);
+}
+
+static void
 extkeyval(struct header *h, const char *key, const char *val, size_t vallen)
 {
 	char *end;
 
 	if (strcmp(key, "atime") == 0) {
-		h->atime = strtoull(val, &end, 10);
-		if (end != val + vallen)
-			fatal("invalid extended header: bad atime");
+		parsetime(&h->atime, "atime", val, vallen);
 	} else if (strcmp(key, "charset") == 0) {
 	} else if (strcmp(key, "comment") == 0) {
 		/* ignore */
+	} else if (strcmp(key, "ctime") == 0) {
+		parsetime(&h->ctime, "ctime", val, vallen);
 	} else if (strcmp(key, "gid") == 0) {
 		h->gid = strtoul(val, &end, 10);
 		if (end != val + vallen)
@@ -300,9 +319,7 @@ extkeyval(struct header *h, const char *key, const char *val, size_t vallen)
 		if (!h->linkname)
 			fatal(NULL);
 	} else if (strcmp(key, "mtime") == 0) {
-		h->mtime = strtoull(val, &end, 10);
-		if (end != val + vallen)
-			fatal("invalid extended header: bad mtime");
+		parsetime(&h->mtime, "mtime", val, vallen);
 	} else if (strcmp(key, "path") == 0) {
 		h->name = memdup(val, vallen);
 		if (!h->name)
@@ -514,8 +531,8 @@ list(struct header *h)
 		snprintf(gnamebuf, sizeof(gnamebuf), "%ju", (uintmax_t)h->gid);
 		gname = gnamebuf;
 	}
-	timefmt = h->mtime + 157800000 < curtime ? "%b %e  %Y" : "%b %e %H:%M";
-	tm = localtime(&h->mtime);
+	timefmt = h->mtime.tv_sec + 157800000 < curtime ? "%b %e  %Y" : "%b %e %H:%M";
+	tm = localtime(&h->mtime.tv_sec);
 	if (!tm)
 		fatal("localtime:");
 	strftime(time, sizeof(time), timefmt, tm);
