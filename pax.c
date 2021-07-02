@@ -208,8 +208,6 @@ readustar(FILE *f, struct header *h)
 			h->linkname[linklen] = '\0';
 		}
 	}
-	if (memcmp(buf + 263, "00", 2) != 0)
-		fatal("invalid header version");
 	h->uname = buf + 265;
 	if (!memchr(h->uname, '\0', 32))
 		fatal("uname is not NUL-terminated");
