@@ -384,7 +384,7 @@ readexthdr(FILE *f, struct header *h, size_t len)
 	char *rec, *end, *key, *val;
 
 	pad = ((len + 511) & ~511);
-	if (buflen < len) {
+	if (buflen < pad) {
 		buflen = (pad + 8191) & ~8191;
 		free(buf);
 		buf = malloc(buflen);
