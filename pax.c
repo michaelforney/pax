@@ -150,7 +150,8 @@ octnum(char *str, size_t len)
 static int
 readustar(FILE *f, struct header *h)
 {
-	char buf[512], *end, *p;
+	static char buf[512];
+	char *end, *p;
 	size_t namelen, prefixlen, linklen;
 	unsigned major, minor;
 	unsigned long sum, chksum;
