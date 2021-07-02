@@ -74,6 +74,7 @@ static struct {
 } opt;
 static const char *exthdr_name;
 static const char *globexthdr_name;
+static struct header local, global;
 static struct replstr *repl;
 
 static void
@@ -175,7 +176,11 @@ readustar(FILE *f, struct header *h)
 	chksum = octnum(buf + 148, 8);
 	if (sum != chksum)
 		fatal("bad checksum: %lu != %lu", sum, chksum);
-	if (!h->name) {
+	if (local.name) {
+		h->name = local.name;
+	} else if (global.name) {
+		h->name = global.name;
+	} else {
 		namelen = strnlen(buf, 100);
 		prefixlen = strnlen(buf + 345, 155);
 		if (namelen == 100 || prefixlen > 0) {
@@ -198,7 +203,11 @@ readustar(FILE *f, struct header *h)
 	h->mtime = octnum(buf + 136, 12);
 	h->type = buf[156];
 	
-	if (!h->linkname) {
+	if (local.linkname) {
+		h->linkname = local.linkname;
+	} else if (global.linkname) {
+		h->linkname = global.linkname;
+	} else {
 		linklen = strnlen(buf + 157, 100);
 		if (linklen == 100) {
 			h->linkname = malloc(linklen + 1);
@@ -210,12 +219,24 @@ readustar(FILE *f, struct header *h)
 			h->linkname = buf + 157;
 		}
 	}
-	h->uname = buf + 265;
-	if (!memchr(h->uname, '\0', 32))
-		fatal("uname is not NUL-terminated");
-	h->gname = buf + 297;
-	if (!memchr(h->gname, '\0', 32))
-		fatal("gname is not NUL-terminated");
+	if (local.uname) {
+		h->uname = local.uname;
+	} else if (global.uname) {
+		h->uname = global.uname;
+	} else {
+		h->uname = buf + 265;
+		if (!memchr(h->uname, '\0', 32))
+			fatal("uname is not NUL-terminated");
+	}
+	if (local.gname) {
+		h->gname = local.gname;
+	} else if (global.gname) {
+		h->gname = global.gname;
+	} else {
+		h->gname = buf + 297;
+		if (!memchr(h->gname, '\0', 32))
+			fatal("gname is not NUL-terminated");
+	}
 	if (h->type == '3' || h->type == '4') {
 		major = octnum(buf + 329, 8);
 		minor = octnum(buf + 337, 8);
@@ -321,9 +342,7 @@ readexthdr(FILE *f, struct header *h, size_t len)
 static int
 readpax(FILE *f, struct header *h)
 {
-	static struct header global;
-	struct header local = {0};
-
+	memset(&local, 0, sizeof(local));
 	for (;;) {
 		if (readustar(f, h) == 0)
 			return 0;
