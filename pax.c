@@ -1,10 +1,16 @@
 #define _POSIX_C_SOURCE 200809L
+#include <limits.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <fnmatch.h>
+#include <grp.h>
+#include <pwd.h>
 #include <regex.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #ifndef makedev
 #include <sys/sysmacros.h>
@@ -76,6 +82,7 @@ static const char *exthdr_name;
 static const char *globexthdr_name;
 static struct header local, global;
 static struct replstr *repl;
+static time_t curtime;
 
 static void
 fatal(const char *fmt, ...)
@@ -444,6 +451,60 @@ parseopts(char *s)
 	}
 }
 
+static void
+list(struct header *h)
+{
+	char mode[11], time[13], info[23];
+	char unamebuf[(sizeof(uid_t) * CHAR_BIT + 2) / 3 + 1];
+	char gnamebuf[(sizeof(gid_t) * CHAR_BIT + 2) / 3 + 1];
+	const char *uname, *gname, *timefmt;
+	struct tm *tm;
+
+	memset(mode, '-', sizeof(mode) - 1);
+	switch (h->type) {
+	case '2': mode[0] = 'l'; break;
+	case '3': mode[0] = 'c'; break;
+	case '4': mode[0] = 'b'; break;
+	case '5': mode[0] = 'd'; break;
+	case '6': mode[0] = 'p'; break;
+	}
+	if (h->mode & S_IRUSR) mode[1] = 'r';
+	if (h->mode & S_IWUSR) mode[2] = 'w';
+	if (h->mode & S_IXUSR) mode[3] = 'x';
+	if (h->mode & S_IRGRP) mode[4] = 'r';
+	if (h->mode & S_IWGRP) mode[5] = 'w';
+	if (h->mode & S_IXGRP) mode[6] = 'x';
+	if (h->mode & S_IROTH) mode[7] = 'r';
+	if (h->mode & S_IWOTH) mode[8] = 'w';
+	if (h->mode & S_IXOTH) mode[9] = 'x';
+	if (h->mode & S_ISUID) mode[3] = mode[3] == 'x' ? 's' : 'S';
+	if (h->mode & S_ISGID) mode[3] = mode[6] == 'x' ? 's' : 'S';
+	if (h->mode & S_ISVTX) mode[9] = mode[9] == 'x' ? 't' : 'T';
+	uname = h->uname;
+	if (!uname[0]) {
+		snprintf(unamebuf, sizeof(unamebuf), "%ju", (uintmax_t)h->uid);
+		uname = unamebuf;
+	}
+	gname = h->gname;
+	if (!gname[0]) {
+		snprintf(gnamebuf, sizeof(gnamebuf), "%ju", (uintmax_t)h->gid);
+		gname = gnamebuf;
+	}
+	timefmt = h->mtime + 157800000 < curtime ? "%b %e  %Y" : "%b %e %H:%M";
+	tm = localtime(&h->mtime);
+	if (!tm)
+		fatal("localtime:");
+	strftime(time, sizeof(time), timefmt, tm);
+	if (h->type == '3' || h->type == '4')
+		snprintf(info, sizeof(info), "%u, %u", major(h->dev), minor(h->dev));
+	else
+		snprintf(info, sizeof(info), "%ju", (uintmax_t)h->size);
+	printf("%s %2d %-8s %-8s %9s %s %s", mode, 1, uname, gname, info, time, h->name);
+	if (h->type == '1')
+		printf(" == %s", h->linkname);
+	putchar('\n');
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -549,6 +610,10 @@ main(int argc, char *argv[])
 		}
 	}
 
+	curtime = time(NULL);
+	if (curtime == (time_t)-1)
+		fatal("time:");
+
 	switch (mode) {
 	case LIST:
 		for (;;) {
@@ -557,6 +622,7 @@ main(int argc, char *argv[])
 			if (opt.listopt) {
 				fatal("listopt is not supported");
 			} else if (vflag) {
+				list(&hdr);
 			} else {
 				printf("%s\n", hdr.name);
 			}
