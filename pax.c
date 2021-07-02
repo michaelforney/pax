@@ -80,7 +80,7 @@ static struct {
 } opt;
 static const char *exthdr_name;
 static const char *globexthdr_name;
-static struct header local, global;
+static struct header exthdr, globexthdr;
 static struct replstr *repl;
 static time_t curtime;
 
@@ -183,10 +183,10 @@ readustar(FILE *f, struct header *h)
 	chksum = octnum(buf + 148, 8);
 	if (sum != chksum)
 		fatal("bad checksum: %lu != %lu", sum, chksum);
-	if (local.name) {
-		h->name = local.name;
-	} else if (global.name) {
-		h->name = global.name;
+	if (exthdr.name) {
+		h->name = exthdr.name;
+	} else if (globexthdr.name) {
+		h->name = globexthdr.name;
 	} else {
 		namelen = strnlen(buf, 100);
 		prefixlen = strnlen(buf + 345, 155);
@@ -210,10 +210,10 @@ readustar(FILE *f, struct header *h)
 	h->mtime = octnum(buf + 136, 12);
 	h->type = buf[156];
 	
-	if (local.linkname) {
-		h->linkname = local.linkname;
-	} else if (global.linkname) {
-		h->linkname = global.linkname;
+	if (exthdr.linkname) {
+		h->linkname = exthdr.linkname;
+	} else if (globexthdr.linkname) {
+		h->linkname = globexthdr.linkname;
 	} else {
 		linklen = strnlen(buf + 157, 100);
 		if (linklen == 100) {
@@ -226,19 +226,19 @@ readustar(FILE *f, struct header *h)
 			h->linkname = buf + 157;
 		}
 	}
-	if (local.uname) {
-		h->uname = local.uname;
-	} else if (global.uname) {
-		h->uname = global.uname;
+	if (exthdr.uname) {
+		h->uname = exthdr.uname;
+	} else if (globexthdr.uname) {
+		h->uname = globexthdr.uname;
 	} else {
 		h->uname = buf + 265;
 		if (!memchr(h->uname, '\0', 32))
 			fatal("uname is not NUL-terminated");
 	}
-	if (local.gname) {
-		h->gname = local.gname;
-	} else if (global.gname) {
-		h->gname = global.gname;
+	if (exthdr.gname) {
+		h->gname = exthdr.gname;
+	} else if (globexthdr.gname) {
+		h->gname = globexthdr.gname;
 	} else {
 		h->gname = buf + 297;
 		if (!memchr(h->gname, '\0', 32))
@@ -349,16 +349,16 @@ readexthdr(FILE *f, struct header *h, size_t len)
 static int
 readpax(FILE *f, struct header *h)
 {
-	memset(&local, 0, sizeof(local));
+	memset(&exthdr, 0, sizeof(exthdr));
 	for (;;) {
 		if (readustar(f, h) == 0)
 			return 0;
 		switch (h->type) {
 		case 'g':
-			readexthdr(f, &global, h->size);
+			readexthdr(f, &globexthdr, h->size);
 			break;
 		case 'x':
-			readexthdr(f, &local, h->size);
+			readexthdr(f, &exthdr, h->size);
 			break;
 		default:
 			return 1;
@@ -446,7 +446,7 @@ parseopts(char *s)
 			if (val)
 				fatal("option 'times' should not have a value");
 		} else {
-			extkeyval(&global, key, val, s - val);
+			extkeyval(&globexthdr, key, val, s - val);
 		}
 	}
 }
