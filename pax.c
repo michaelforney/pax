@@ -573,8 +573,10 @@ list(struct header *h)
 	else
 		snprintf(info, sizeof(info), "%ju", (uintmax_t)h->size);
 	printf("%s %2d %-8s %-8s %9s %s %s", mode, 1, uname, gname, info, time, h->name);
-	if (h->type == '1')
-		printf(" == %s", h->linkname);
+	switch (h->type) {
+	case LNK: printf(" == %s", h->linkname); break;
+	case SYM: printf(" -> %s", h->linkname); break;
+	}
 	putchar('\n');
 }
 
