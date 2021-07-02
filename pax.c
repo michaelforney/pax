@@ -151,7 +151,6 @@ static int
 readustar(FILE *f, struct header *h)
 {
 	static char buf[512];
-	char *end, *p;
 	size_t namelen, prefixlen, linklen;
 	unsigned major, minor;
 	unsigned long sum, chksum;
@@ -277,7 +276,7 @@ extkeyval(struct header *h, const char *key, const char *val, size_t vallen)
 	}
 }
 
-static int
+static void
 readexthdr(FILE *f, struct header *h, size_t len)
 {
 	static char *rec = NULL;
