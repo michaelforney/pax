@@ -241,6 +241,8 @@ readustar(FILE *f, struct header *h)
 	           globexthdr.fields & MTIME ? globexthdr.mtime :
 	           (struct timespec){.tv_sec = octnum(buf + 136, 12)};
 	h->type = buf[156];
+	if (h->type == AREGTYPE)
+		h->type = REGTYPE;
 	
 	if (exthdr.fields & LINKPATH) {
 		h->linkname = exthdr.linkname;
@@ -601,7 +603,6 @@ extract(struct header *h)
 	size_t len, pad;
 
 	switch (h->type) {
-	case AREGTYPE:
 	case REGTYPE:
 		fd = open(h->name, O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, h->mode);
 		if (fd < 0)
