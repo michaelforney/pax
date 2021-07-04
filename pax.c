@@ -462,7 +462,7 @@ parseopts(char *s)
 			++val;
 		}
 		if (strcmp(key, "delete") == 0) {
-			static struct {
+			static const struct {
 				const char *name;
 				enum field field;
 			} kw[] = {
