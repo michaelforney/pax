@@ -426,6 +426,25 @@ readexthdr(FILE *f, struct extheader *h, size_t len)
 	}
 }
 
+static void
+readgnuhdr(FILE *f, struct strbuf *b, off_t len)
+{
+	size_t padlen;
+
+	if (len >= SIZE_MAX - 1024)
+		fatal("path is too long");
+	if (len + 1 > b->cap) {
+		free(b->str);
+		b->cap = ROUNDUP(len + 1, 1024);
+		b->str = malloc(b->cap);
+	}
+	padlen = ROUNDUP(len, 512);
+	if (fread(b->str, 1, padlen, f) != padlen)
+		fatal("read:");
+	b->str[len] = '\0';
+	b->len = len;
+}
+
 static int
 readpax(FILE *f, struct header *h)
 {
@@ -434,6 +453,8 @@ readpax(FILE *f, struct header *h)
 		switch (h->type) {
 		case 'g': readexthdr(f, &globexthdr, h->size); break;
 		case 'x': readexthdr(f, &exthdr, h->size);     break;
+		case 'L': readgnuhdr(f, &exthdr.path, h->size),     exthdr.fields |= PATH;     break;
+		case 'K': readgnuhdr(f, &exthdr.linkpath, h->size), exthdr.fields |= LINKPATH; break;
 		default: return 1;
 		}
 	}
