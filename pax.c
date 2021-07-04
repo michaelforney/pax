@@ -22,6 +22,7 @@
 #include "arg.h"
 
 #define LEN(a) (sizeof(a) / sizeof((a)[0]))
+#define ROUNDUP(x, a) (((x) + (a) - 1) & ~((a) - 1))
 
 enum mode {
 	LIST,
@@ -374,18 +375,18 @@ readexthdr(FILE *f, struct header *h, size_t len)
 {
 	static char *buf;
 	static size_t buflen;
-	size_t reclen, vallen, pad;
+	size_t reclen, vallen, padlen;
 	char *rec, *end, *key, *val;
 
-	pad = ((len + 511) & ~511);
-	if (buflen < pad) {
-		buflen = (pad + 8191) & ~8191;
+	if (buflen < len) {
+		buflen = ROUNDUP(len, 8192);
 		free(buf);
 		buf = malloc(buflen);
 		if (!buf)
 			fatal(NULL);
 	}
-	if (fread(buf, 1, pad, stdin) != pad) {
+	padlen = ROUNDUP(len, 512);
+	if (fread(buf, 1, padlen, stdin) != padlen) {
 		if (ferror(f))
 			fatal("read:");
 		fatal("archive truncated");
@@ -596,18 +597,16 @@ extract(struct header *h)
 {
 	int fd;
 	char buf[8192];
-	size_t len, pad;
+	off_t size;
 
 	switch (h->type) {
 	case REGTYPE:
 		fd = open(h->name, O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, h->mode);
 		if (fd < 0)
 			fatal("open %s:", h->name);
-		len = h->size;
-		pad = ((len + 511) & ~511) - len;
-		for (len = h->size; len > sizeof(buf); len -= sizeof(buf))
+		for (size = h->size; size > sizeof(buf); size -= sizeof(buf))
 			copyblock(buf, stdin, sizeof(buf), fd, sizeof(buf));
-		copyblock(buf, stdin, len + pad, fd, len);
+		copyblock(buf, stdin, ROUNDUP(size, 512), fd, size);
 		close(fd);
 		break;
 	case LNKTYPE:
@@ -628,7 +627,7 @@ extract(struct header *h)
 		break;
 	}
 	if (h->type != REGTYPE)
-		skip(stdin, (h->size + 511) & ~511);
+		skip(stdin, ROUNDUP(h->size, 512));
 }
 
 int
@@ -750,7 +749,7 @@ main(int argc, char *argv[])
 				list(&hdr);
 			else
 				printf("%s\n", hdr.name);
-			skip(stdin, (hdr.size + 511) & ~511);
+			skip(stdin, ROUNDUP(hdr.size, 512));
 		}
 		break;
 	case READ:
