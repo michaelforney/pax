@@ -528,6 +528,7 @@ list(struct header *h)
 	struct tm *tm;
 
 	memset(mode, '-', sizeof(mode) - 1);
+	mode[10] = '\0';
 	switch (h->type) {
 	case SYMTYPE: mode[0] = 'l'; break;
 	case CHRTYPE: mode[0] = 'c'; break;
