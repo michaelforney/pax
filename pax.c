@@ -415,20 +415,14 @@ static int
 readpax(FILE *f, struct header *h)
 {
 	memset(&exthdr, 0, sizeof(exthdr));
-	for (;;) {
-		if (readustar(f, h) == 0)
-			return 0;
+	while (readustar(f, h)) {
 		switch (h->type) {
-		case 'g':
-			readexthdr(f, &globexthdr, h->size);
-			break;
-		case 'x':
-			readexthdr(f, &exthdr, h->size);
-			break;
-		default:
-			return 1;
+		case 'g': readexthdr(f, &globexthdr, h->size); break;
+		case 'x': readexthdr(f, &exthdr, h->size);     break;
+		default: return 1;
 		}
 	}
+	return 0;
 }
 
 static void
