@@ -215,13 +215,14 @@ readustar(FILE *f, struct header *h)
 		namelen = strnlen(buf, 100);
 		prefixlen = strnlen(buf + 345, 155);
 		if (namelen == 100 || prefixlen > 0) {
-			h->name = malloc(namelen + prefixlen + 2);
-			if (!h->name)
-				fatal(NULL);
-			memcpy(h->name, buf, namelen);
-			h->name[namelen] = '\0';
-			memcpy(h->name + namelen + 1, buf + 345, prefixlen);
-			h->name[namelen + 1 + prefixlen] = '\0';
+			static char namebuf[257];
+
+			memcpy(namebuf, buf, namelen);
+			namebuf[namelen] = '/';
+			memcpy(namebuf + namelen + 1, buf + 345, prefixlen);
+			namebuf[namelen + 1 + prefixlen] = '\0';
+			namelen += 1 + prefixlen;
+			h->name = namebuf;
 		} else {
 			h->name = buf;
 		}
