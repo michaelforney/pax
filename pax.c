@@ -51,7 +51,6 @@ enum field {
 };
 
 struct header {
-	enum field fields;
 	char *name;
 	mode_t mode;
 	uid_t uid;
@@ -63,6 +62,23 @@ struct header {
 	char *uname;
 	char *gname;
 	dev_t dev;
+};
+
+struct strbuf {
+	char *str;
+	size_t len, cap;
+};
+
+struct extheader {
+	enum field fields;
+	struct strbuf path;
+	uid_t uid;
+	gid_t gid;
+	off_t size;
+	struct timespec atime, mtime, ctime;
+	struct strbuf linkpath;
+	struct strbuf uname;
+	struct strbuf gname;
 };
 
 struct replstr {
@@ -87,7 +103,7 @@ static struct {
 } opt;
 static const char *exthdr_name;
 static const char *globexthdr_name;
-static struct header exthdr, globexthdr;
+static struct extheader exthdr, globexthdr;
 static time_t curtime;
 
 static void
@@ -109,17 +125,6 @@ fatal(const char *fmt, ...)
 		perror(NULL);
 	}
 	exit(1);
-}
-
-static void *
-memdup(const void *src, size_t len)
-{
-	void *dst;
-
-	dst = malloc(len);
-	if (dst)
-		memcpy(dst, src, len);
-	return dst;
 }
 
 static void
@@ -209,9 +214,9 @@ readustar(FILE *f, struct header *h)
 	if (sum != chksum)
 		fatal("bad checksum: %lu != %lu", sum, chksum);
 	if (exthdr.fields & PATH) {
-		h->name = exthdr.name;
+		h->name = exthdr.path.str;
 	} else if (globexthdr.fields & PATH) {
-		h->name = globexthdr.name;
+		h->name = globexthdr.path.str;
 	} else {
 		namelen = strnlen(buf, 100);
 		prefixlen = strnlen(buf + 345, 155);
@@ -247,9 +252,9 @@ readustar(FILE *f, struct header *h)
 		h->type = REGTYPE;
 	
 	if (exthdr.fields & LINKPATH) {
-		h->linkname = exthdr.linkname;
+		h->linkname = exthdr.linkpath.str;
 	} else if (globexthdr.fields & LINKPATH) {
-		h->linkname = globexthdr.linkname;
+		h->linkname = globexthdr.linkpath.str;
 	} else {
 		linklen = strnlen(buf + 157, 100);
 		if (linklen == 100) {
@@ -263,18 +268,18 @@ readustar(FILE *f, struct header *h)
 		}
 	}
 	if (exthdr.fields & UNAME) {
-		h->uname = exthdr.uname;
+		h->uname = exthdr.uname.str;
 	} else if (globexthdr.fields & UNAME) {
-		h->uname = globexthdr.uname;
+		h->uname = globexthdr.uname.str;
 	} else {
 		h->uname = buf + 265;
 		if (!memchr(h->uname, '\0', 32))
 			fatal("uname is not NUL-terminated");
 	}
 	if (exthdr.fields & GNAME) {
-		h->gname = exthdr.gname;
+		h->gname = exthdr.gname.str;
 	} else if (globexthdr.fields & GNAME) {
-		h->gname = globexthdr.gname;
+		h->gname = globexthdr.gname.str;
 	} else {
 		h->gname = buf + 297;
 		if (!memchr(h->gname, '\0', 32))
@@ -312,7 +317,24 @@ parsetime(struct timespec *ts, const char *field, const char *str, size_t len)
 }
 
 static void
-extkeyval(struct header *h, const char *key, const char *val, size_t vallen)
+strbufcpy(struct strbuf *b, const char *str, size_t len, size_t rnd)
+{
+	if (len >= SIZE_MAX - rnd)
+		fatal("path is too long");
+	if (len + 1 > b->cap) {
+		free(b->str);
+		b->cap = ROUNDUP(len + 1, rnd);
+		b->str = malloc(b->cap);
+		if (!b->str)
+			fatal(NULL);
+	}
+	memcpy(b->str, str, len);
+	b->len = len;
+	b->str[len] = '\0';
+}
+
+static void
+extkeyval(struct extheader *h, const char *key, const char *val, size_t vallen)
 {
 	char *end;
 
@@ -331,22 +353,16 @@ extkeyval(struct header *h, const char *key, const char *val, size_t vallen)
 			fatal("invalid extnded header: bad gid");
 		h->fields |= GID;
 	} else if (strcmp(key, "gname") == 0) {
-		h->gname = memdup(val, vallen);
-		if (!h->gname)
-			fatal(NULL);
+		strbufcpy(&h->gname, val, vallen, 256);
 		h->fields |= GNAME;
 	} else if (strcmp(key, "hdrcharset") == 0) {
 	} else if (strcmp(key, "linkpath") == 0) {
-		h->linkname = memdup(val, vallen);
-		if (!h->linkname)
-			fatal(NULL);
+		strbufcpy(&h->linkpath, val, vallen, 1024);
 		h->fields |= LINKPATH;
 	} else if (strcmp(key, "mtime") == 0) {
 		parsetime(&h->mtime, "mtime", val, vallen);
 	} else if (strcmp(key, "path") == 0) {
-		h->name = memdup(val, vallen);
-		if (!h->name)
-			fatal(NULL);
+		strbufcpy(&h->path, val, vallen, 1024);
 		h->fields |= PATH;
 	} else if (strncmp(key, "realtime.", 9) == 0) {
 	} else if (strncmp(key, "security.", 9) == 0) {
@@ -361,9 +377,7 @@ extkeyval(struct header *h, const char *key, const char *val, size_t vallen)
 			fatal("invalid extnded header: bad uid");
 		h->fields |= UID;
 	} else if (strcmp(key, "uname") == 0) {
-		h->uname = memdup(val, vallen);
-		if (!h->uname)
-			fatal(NULL);
+		strbufcpy(&h->uname, val, vallen, 256);
 		h->fields |= UNAME;
 	} else {
 		fprintf(stderr, "ignoring unknown keyword '%s'\n", key);
@@ -371,7 +385,7 @@ extkeyval(struct header *h, const char *key, const char *val, size_t vallen)
 }
 
 static void
-readexthdr(FILE *f, struct header *h, size_t len)
+readexthdr(FILE *f, struct extheader *h, size_t len)
 {
 	static char *buf;
 	static size_t buflen;
@@ -415,7 +429,7 @@ readexthdr(FILE *f, struct header *h, size_t len)
 static int
 readpax(FILE *f, struct header *h)
 {
-	memset(&exthdr, 0, sizeof(exthdr));
+	exthdr.fields = 0;
 	while (readustar(f, h)) {
 		switch (h->type) {
 		case 'g': readexthdr(f, &globexthdr, h->size); break;
