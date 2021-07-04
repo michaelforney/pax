@@ -372,8 +372,8 @@ extkeyval(struct header *h, const char *key, const char *val, size_t vallen)
 static void
 readexthdr(FILE *f, struct header *h, size_t len)
 {
-	static char *buf = NULL;
-	static size_t buflen = 0;
+	static char *buf;
+	static size_t buflen;
 	size_t reclen, vallen, pad;
 	char *rec, *end, *key, *val;
 
