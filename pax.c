@@ -14,6 +14,7 @@
 #include <regex.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <tar.h>
 #include <unistd.h>
 #ifndef makedev
 #include <sys/sysmacros.h>
@@ -46,16 +47,6 @@ enum field {
 	SIZE     = 1<<7,
 	UID      = 1<<8,
 	UNAME    = 1<<9,
-};
-
-enum type {
-	REG = '0',
-	LNK = '1',
-	SYM = '2',
-	CHR = '3',
-	BLK = '4',
-	DIR = '5',
-	PIP = '6',
 };
 
 struct header {
@@ -535,11 +526,11 @@ list(struct header *h)
 
 	memset(mode, '-', sizeof(mode) - 1);
 	switch (h->type) {
-	case SYM: mode[0] = 'l'; break;
-	case CHR: mode[0] = 'c'; break;
-	case BLK: mode[0] = 'b'; break;
-	case DIR: mode[0] = 'd'; break;
-	case PIP: mode[0] = 'p'; break;
+	case SYMTYPE: mode[0] = 'l'; break;
+	case CHRTYPE: mode[0] = 'c'; break;
+	case BLKTYPE: mode[0] = 'b'; break;
+	case DIRTYPE: mode[0] = 'd'; break;
+	case FIFOTYPE: mode[0] = 'p'; break;
 	}
 	if (h->mode & S_IRUSR) mode[1] = 'r';
 	if (h->mode & S_IWUSR) mode[2] = 'w';
@@ -574,8 +565,8 @@ list(struct header *h)
 		snprintf(info, sizeof(info), "%ju", (uintmax_t)h->size);
 	printf("%s %2d %-8s %-8s %9s %s %s", mode, 1, uname, gname, info, time, h->name);
 	switch (h->type) {
-	case LNK: printf(" == %s", h->linkname); break;
-	case SYM: printf(" -> %s", h->linkname); break;
+	case LNKTYPE: printf(" == %s", h->linkname); break;
+	case SYMTYPE: printf(" -> %s", h->linkname); break;
 	}
 	putchar('\n');
 }
@@ -610,8 +601,8 @@ extract(struct header *h)
 	size_t len, pad;
 
 	switch (h->type) {
-	case 0:
-	case REG:
+	case AREGTYPE:
+	case REGTYPE:
 		fd = open(h->name, O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, h->mode);
 		if (fd < 0)
 			fatal("open %s:", h->name);
@@ -622,24 +613,24 @@ extract(struct header *h)
 		copyblock(buf, stdin, len + pad, fd, len);
 		close(fd);
 		break;
-	case LNK:
+	case LNKTYPE:
 		if (link(h->linkname, h->name) != 0)
 			fatal("link %s:", h->name);
 		break;
-	case SYM:
+	case SYMTYPE:
 		if (symlink(h->linkname, h->name) != 0)
 			fatal("symlink %s:", h->name);
 		break;
-	case DIR:
+	case DIRTYPE:
 		if (mkdir(h->name, h->mode) != 0)
 			fatal("mkdir %s:", h->name);
 		break;
-	case PIP:
+	case FIFOTYPE:
 		if (mkfifo(h->name, h->mode) != 0)
 			fatal("mkfifo %s:", h->name);
 		break;
 	}
-	if (h->type != REG)
+	if (h->type != REGTYPE)
 		skip(stdin, (h->size + 511) & ~511);
 }
 
