@@ -100,6 +100,7 @@ static struct {
 	enum field delete;
 	int linkdata;
 	const char *listopt;
+	int times;
 } opt;
 static const char *exthdr_name;
 static const char *globexthdr_name;
@@ -542,6 +543,7 @@ parseopts(char *s)
 		} else if (strcmp(key, "times") == 0) {
 			if (val)
 				fatal("option 'times' should not have a value");
+			opt.times = 1;
 		} else {
 			(void)ext;
 			/* XXX: need to handle := */
