@@ -244,7 +244,7 @@ repl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
 			}
 			n += i <= 9 ? match[i].rm_eo - match[i].rm_so : 1;
 		}
-		d = strbufalloc(b, b->len + n, 1024) + b->len;
+		d = strbufalloc(b, b->len + n + 1, 1024) + b->len;
 		b->len += n;
 		memcpy(d, old, match[0].rm_so);
 		d += match[0].rm_so;
