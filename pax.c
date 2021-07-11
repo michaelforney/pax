@@ -148,17 +148,18 @@ skip(FILE *f, size_t len)
 static unsigned long long
 octnum(char *str, size_t len)
 {
-	int c;
+	unsigned c;
 	unsigned long long n;
 
 	n = 0;
 	while (len > 0) {
-		c = (unsigned)*str;
+		c = (unsigned char)*str;
 		if (c == ' ' || c == '\0')
 			break;
-		if (c < '0' || c > '7')
+		c -= '0';
+		if (c > 7)
 			fatal("invalid ustar number field");
-		n = n * 8 + (c - '0');
+		n = n * 8 + c;
 		++str;
 		--len;
 	}
@@ -170,15 +171,16 @@ octnum(char *str, size_t len)
 static unsigned long long
 decnum(const char *str, size_t len, char **end)
 {
-	int c;
+	unsigned c;
 	unsigned long long n;
 
 	n = 0;
 	while (len > 0) {
-		c = (unsigned)*str;
-		if (c < '0' || c > '9')
+		c = (unsigned char)*str;
+		c -= '0';
+		if (c > 9)
 			break;
-		n = n * 10 + (c - '0');
+		n = n * 10 + c;
 		++str;
 		--len;
 	}
