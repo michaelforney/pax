@@ -52,6 +52,7 @@ enum field {
 
 struct header {
 	char *name;
+	size_t namelen;
 	mode_t mode;
 	uid_t uid;
 	gid_t gid;
@@ -82,7 +83,11 @@ struct extheader {
 };
 
 struct replstr {
-	regex_t reg;
+	regex_t old;
+	char *new;
+	int global;
+	int print;
+	struct replstr *next;
 };
 
 static int aflag;
@@ -105,6 +110,7 @@ static struct {
 static const char *exthdr_name;
 static const char *globexthdr_name;
 static struct extheader exthdr, globexthdr;
+static struct replstr *replstr;
 static time_t curtime;
 
 static void
@@ -190,6 +196,85 @@ decnum(const char *str, size_t len, char **end)
 	return n;
 }
 
+static char *
+strbufalloc(struct strbuf *b, size_t n, size_t a)
+{
+	char *s;
+
+	if (n < b->cap)
+		return b->str;
+	if (n > SIZE_MAX - a)
+		fatal("path is too long");
+	free(b->str);
+	b->cap = ROUNDUP(n, a);
+	s = malloc(b->cap);
+	if (!s)
+		fatal(NULL);
+	return b->str = s;
+}
+
+static void
+strbufcpy(struct strbuf *b, const char *s, size_t n, size_t a)
+{
+	char *d;
+
+	d = strbufalloc(b, n + 1, a);
+	memcpy(d, s, n + 1);
+	d[n] = 0;
+	b->len = n;
+}
+
+static int
+repl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
+{
+	regmatch_t match[10];
+	size_t i, n, l;
+	const char *s;
+	char *d;
+	int flags = 0;
+
+	b->len = 0;
+	while (oldlen > 0 && regexec(&r->old, old, LEN(match), match, flags) == 0) {
+		n = match[0].rm_so + (oldlen - match[0].rm_eo);
+		for (s = r->new; *s; ++s) {
+			i = -1;
+			switch (*s) {
+			case '&':  i = 0; break;
+			case '\\': i = (unsigned char)*++s - '0'; break;
+			}
+			n += i <= 9 ? match[i].rm_eo - match[i].rm_so : 1;
+		}
+		d = strbufalloc(b, b->len + n, 1024) + b->len;
+		b->len += n;
+		memcpy(d, old, match[0].rm_so);
+		d += match[0].rm_so;
+		for (s = r->new; *s; ++s) {
+			i = -1;
+			switch (*s) {
+			case '&':  i = 0; break;
+			case '\\': i = (unsigned char)*++s - '0'; break;
+			}
+			if (i <= 9) {
+				l = match[i].rm_eo - match[i].rm_so;
+				memcpy(d, old + match[i].rm_so, l);
+				d += l;
+			} else {
+				*d++ = *s;
+			}
+		}
+		memcpy(d, old + match[0].rm_eo, oldlen - match[0].rm_eo);
+		old += match[0].rm_eo;
+		oldlen -= match[0].rm_eo;
+		flags |= REG_NOTBOL;
+		if (!r->global)
+			break;
+	}
+	if (!flags)
+		return 0;
+	b->str[b->len] = 0;
+	return 1;
+}
+
 static int
 readustar(FILE *f, struct header *h)
 {
@@ -218,8 +303,10 @@ readustar(FILE *f, struct header *h)
 		fatal("bad checksum: %lu != %lu", sum, chksum);
 	if (exthdr.fields & PATH) {
 		h->name = exthdr.path.str;
+		h->namelen = exthdr.path.len;
 	} else if (globexthdr.fields & PATH) {
 		h->name = globexthdr.path.str;
+		h->namelen = globexthdr.path.len;
 	} else {
 		namelen = strnlen(buf, 100);
 		prefixlen = strnlen(buf + 345, 155);
@@ -235,6 +322,7 @@ readustar(FILE *f, struct header *h)
 		} else {
 			h->name = buf;
 		}
+		h->namelen = namelen;
 	}
 
 	h->mode = octnum(buf + 100, 8);
@@ -296,6 +384,18 @@ readustar(FILE *f, struct header *h)
 		h->dev = makedev(major, minor);
 	}
 
+	for (struct replstr *r = replstr; r; r = r->next) {
+		static struct strbuf namebuf;
+
+		if (repl(r, &namebuf, h->name, h->namelen)) {
+			if (r->print)
+				fprintf(stderr, "%s >> %s\n", h->name, namebuf.str);
+			h->name = namebuf.str;
+			h->namelen = namebuf.len;
+			break;
+		}
+	}
+
 	return 1;
 }
 
@@ -317,23 +417,6 @@ parsetime(struct timespec *ts, const char *field, const char *str, size_t len)
 	}
 	if (pos != end)
 		fatal("invalid extended header: bad %s", field);
-}
-
-static void
-strbufcpy(struct strbuf *b, const char *str, size_t len, size_t rnd)
-{
-	if (len >= SIZE_MAX - rnd)
-		fatal("path is too long");
-	if (len + 1 > b->cap) {
-		free(b->str);
-		b->cap = ROUNDUP(len + 1, rnd);
-		b->str = malloc(b->cap);
-		if (!b->str)
-			fatal(NULL);
-	}
-	memcpy(b->str, str, len);
-	b->len = len;
-	b->str[len] = '\0';
 }
 
 static void
@@ -553,6 +636,54 @@ parseopts(char *s)
 }
 
 static void
+parsereplstr(char *str)
+{
+	static struct replstr **end = &replstr;
+	struct replstr *r;
+	char *old, *new, delim;
+	int err;
+
+	delim = str[0];
+	if (!delim)
+		usage();
+	old = str + 1;
+	str = strchr(old, delim);
+	if (!str)
+		usage();
+	*str = 0;
+	new = str + 1;
+	str = strchr(new, delim);
+	if (!str)
+		usage();
+	*str = 0;
+
+	r = malloc(sizeof(*r));
+	if (!r)
+		fatal(NULL);
+	r->next = NULL;
+	r->global = 0;
+	r->print = 0;
+	for (;;) {
+		switch (*++str) {
+		case 'g': r->global = 1; break;
+		case 'p': r->print = 1; break;
+		case 0: goto done;
+		}
+	}
+done:
+	err = regcomp(&r->old, old, REG_NEWLINE);
+	if (err != 0) {
+		char errbuf[256];
+
+		regerror(err, &r->old, errbuf, sizeof(errbuf));
+		fatal("invalid regular expression: %s", errbuf);
+	}
+	r->new = new;
+	*end = r;
+	end = &r->next;
+}
+
+static void
 list(struct header *h)
 {
 	char mode[11], time[13], info[23];
@@ -734,7 +865,7 @@ main(int argc, char *argv[])
 		mode |= READ;
 		break;
 	case 's':
-		fatal("-s not implemented");
+		parsereplstr(EARGF(usage()));
 		break;
 	case 't':
 		tflag = 1;
