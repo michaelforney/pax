@@ -517,13 +517,7 @@ readgnuhdr(FILE *f, struct strbuf *b, off_t len)
 {
 	size_t padlen;
 
-	if (len >= SIZE_MAX - 1024)
-		fatal("path is too long");
-	if (len + 1 > b->cap) {
-		free(b->str);
-		b->cap = ROUNDUP(len + 1, 1024);
-		b->str = malloc(b->cap);
-	}
+	strbufalloc(b, len + 1, 1024);
 	padlen = ROUNDUP(len, 512);
 	if (fread(b->str, 1, padlen, f) != padlen)
 		fatal("read:");
