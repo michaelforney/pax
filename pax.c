@@ -324,11 +324,14 @@ readustar(FILE *f, struct header *h)
 		if (namelen == 100 || prefixlen > 0) {
 			static char namebuf[257];
 
-			memcpy(namebuf, buf, namelen);
-			namebuf[namelen] = '/';
-			memcpy(namebuf + namelen + 1, buf + 345, prefixlen);
-			namebuf[namelen + 1 + prefixlen] = '\0';
-			namelen += 1 + prefixlen;
+			if (prefixlen > 0) {
+				memcpy(namebuf, buf + 345, prefixlen);
+				namebuf[prefixlen] = '/';
+				++prefixlen;
+			}
+			memcpy(namebuf + prefixlen, buf, namelen);
+			namebuf[prefixlen + namelen] = '\0';
+			namelen += prefixlen;
 			h->name = namebuf;
 		} else {
 			h->name = buf;
