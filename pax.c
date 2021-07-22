@@ -785,6 +785,8 @@ extract(struct header *h)
 	char buf[8192];
 	off_t size;
 
+	if (vflag)
+		puts(h->name);
 	switch (h->type) {
 	case REGTYPE:
 		fd = open(h->name, O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, h->mode);
