@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <assert.h>
+#include <errno.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -132,6 +133,16 @@ fatal(const char *fmt, ...)
 		perror(NULL);
 	}
 	exit(1);
+}
+
+static void *
+reallocarray(void *p, size_t n, size_t m)
+{
+	if (m && n > SIZE_MAX / m) {
+		errno = ENOMEM;
+		return NULL;
+	}
+	return realloc(p, n * m);
 }
 
 static void
@@ -802,6 +813,57 @@ extract(struct header *h)
 		skip(stdin, ROUNDUP(h->size, 512));
 }
 
+static int
+match(struct header *h, char *pats[], size_t patslen, char matched[])
+{
+	static struct {
+		char *name;
+		size_t namelen;
+	} *dirs, *d;
+	static size_t dirslen;
+	size_t i;
+
+	if (patslen == 0)
+		return 1;
+	if (!dflag) {
+		for (i = 0; i < dirslen; ++i) {
+			if (h->namelen >= dirs[i].namelen && memcmp(h->name, dirs[i].name, dirs[i].namelen) == 0)
+				return !cflag;
+		}
+	}
+	for (i = 0; i < patslen; ++i) {
+		if (nflag && matched[i])
+			continue;
+		switch (fnmatch(pats[i], h->name, FNM_PATHNAME | FNM_PERIOD)) {
+		case 0:
+			matched[i] = 1;
+			if (!dflag && h->type == DIRTYPE) {
+				if (dirslen >= 32 && (dirslen & (dirslen - 1)) == 0)
+					dirs = reallocarray(dirs, dirslen, sizeof(dirs[0]) * 2);
+				else if (dirslen == 0)
+					dirs = reallocarray(dirs, 32, sizeof(dirs[0]));
+				if (!dirs)
+					fatal(NULL);
+				d = &dirs[dirslen++];
+				d->namelen = h->namelen;
+				d->name = malloc(d->namelen + 1);
+				if (!d->name)
+					fatal(NULL);
+				memcpy(d->name, h->name, h->namelen);
+				/* add trailing slash if not already present */
+				if (h->name[h->namelen - 1] != '/')
+					d->name[d->namelen++] = '/';
+			}
+			return !cflag;
+		case FNM_NOMATCH:
+			break;
+		default:
+			fatal("fnmatch error");
+		}
+	}
+	return cflag;
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -809,6 +871,8 @@ main(int argc, char *argv[])
 	enum mode mode = LIST;
 	struct header hdr;
 	int (*readhdr)(FILE *, struct header *) = readpax;
+	char *matched;
+	size_t i;
 
 	ARGBEGIN {
 	case 'a':
@@ -912,18 +976,33 @@ main(int argc, char *argv[])
 		fatal("time:");
 	umask(0);
 
+	matched = calloc(1, argc);
+	if (!matched)
+		fatal(NULL);
 	switch (mode) {
 	case LIST:
-		while (readhdr(stdin, &hdr))
-			list(&hdr);
+		while (readhdr(stdin, &hdr)) {
+			if (match(&hdr, argv, argc, matched))
+				list(&hdr);
+			else
+				skip(stdin, ROUNDUP(hdr.size, 512));
+		}
 		break;
 	case READ:
-		while (readhdr(stdin, &hdr))
-			extract(&hdr);
+		while (readhdr(stdin, &hdr)) {
+			if (match(&hdr, argv, argc, matched))
+				extract(&hdr);
+			else
+				skip(stdin, ROUNDUP(hdr.size, 512));
+		}
 		break;
 	case WRITE:
 		break;
 	case COPY:
 		break;
+	}
+	for (i = 0; i < argc; ++i) {
+		if (!matched[i])
+			fatal("pattern not matched: %s", argv[i]);
 	}
 }
