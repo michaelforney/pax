@@ -686,6 +686,12 @@ list(struct header *h)
 	const char *uname, *gname, *timefmt;
 	struct tm *tm;
 
+	if (opt.listopt)
+		fatal("listopt is not supported");
+	if (!vflag) {
+		printf("%s\n", h->name);
+		goto skip;
+	}
 	memset(mode, '-', sizeof(mode) - 1);
 	mode[10] = '\0';
 	switch (h->type) {
@@ -732,6 +738,8 @@ list(struct header *h)
 	case SYMTYPE: printf(" -> %s", h->linkname); break;
 	}
 	putchar('\n');
+skip:
+	skip(stdin, ROUNDUP(h->size, 512));
 }
 
 static void
@@ -906,15 +914,8 @@ main(int argc, char *argv[])
 
 	switch (mode) {
 	case LIST:
-		while (readhdr(stdin, &hdr)) {
-			if (opt.listopt)
-				fatal("listopt is not supported");
-			else if (vflag)
-				list(&hdr);
-			else
-				printf("%s\n", hdr.name);
-			skip(stdin, ROUNDUP(hdr.size, 512));
-		}
+		while (readhdr(stdin, &hdr))
+			list(&hdr);
 		break;
 	case READ:
 		while (readhdr(stdin, &hdr))
