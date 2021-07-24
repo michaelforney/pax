@@ -779,6 +779,23 @@ copyblock(char *buf, FILE *r, size_t nr, int w, size_t nw)
 }
 
 static void
+mkdirp(char *name, size_t len)
+{
+	char *p;
+
+	if (len == 0)
+		return;
+	for (p = name + 1; p < name + len - 1; ++p) {
+		if (*p != '/')
+			continue;
+		*p = 0;
+		if (mkdir(name, 0777) != 0 && errno != EEXIST)
+			fatal("mkdir %s:", name);
+		*p = '/';
+	}
+}
+
+static void
 extract(struct header *h)
 {
 	int fd;
@@ -790,28 +807,58 @@ extract(struct header *h)
 	switch (h->type) {
 	case REGTYPE:
 		fd = open(h->name, O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, h->mode);
-		if (fd < 0)
-			fatal("open %s:", h->name);
+		if (fd < 0) {
+			if (errno == ENOENT) {
+				mkdirp(h->name, h->namelen);
+				fd = open(h->name, O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, h->mode);
+			}
+			if (fd < 0)
+				fatal("open %s:", h->name);
+		}
 		for (size = h->size; size > sizeof(buf); size -= sizeof(buf))
 			copyblock(buf, stdin, sizeof(buf), fd, sizeof(buf));
 		copyblock(buf, stdin, ROUNDUP(size, 512), fd, size);
 		close(fd);
 		break;
 	case LNKTYPE:
-		if (link(h->linkname, h->name) != 0)
+		if (link(h->linkname, h->name) != 0) {
+			if (errno == ENOENT) {
+				mkdirp(h->name, h->namelen);
+				if (link(h->linkname, h->name) == 0)
+					break;
+			}
 			fatal("link %s:", h->name);
+		}
 		break;
 	case SYMTYPE:
-		if (symlink(h->linkname, h->name) != 0)
+		if (symlink(h->linkname, h->name) != 0) {
+			if (errno == ENOENT) {
+				mkdirp(h->name, h->namelen);
+				if (symlink(h->linkname, h->name) == 0)
+					break;
+			}
 			fatal("symlink %s:", h->name);
+		}
 		break;
 	case DIRTYPE:
-		if (mkdir(h->name, h->mode) != 0)
+		if (mkdir(h->name, h->mode) != 0) {
+			if (errno == ENOENT) {
+				mkdirp(h->name, h->namelen);
+				if (mkdir(h->name, h->mode) == 0)
+					break;
+			}
 			fatal("mkdir %s:", h->name);
+		}
 		break;
 	case FIFOTYPE:
-		if (mkfifo(h->name, h->mode) != 0)
+		if (mkfifo(h->name, h->mode) != 0) {
+			if (errno == ENOENT) {
+				mkdirp(h->name, h->namelen);
+				if (mkfifo(h->name, h->mode) == 0)
+					break;
+			}
 			fatal("mkfifo %s:", h->name);
+		}
 		break;
 	}
 	if (h->type != REGTYPE)
