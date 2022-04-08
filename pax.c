@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -88,9 +89,9 @@ struct extheader {
 struct replstr {
 	regex_t old;
 	char *new;
-	int global;
-	int print;
-	int symlink;
+	bool global;
+	bool print;
+	bool symlink;
 	struct replstr *next;
 };
 
@@ -685,15 +686,15 @@ parsereplstr(char *str)
 	if (!r)
 		fatal(NULL);
 	r->next = NULL;
-	r->global = 0;
-	r->print = 0;
-	r->symlink = 0;
+	r->global = false;
+	r->print = false;
+	r->symlink = false;
 	for (;;) {
 		switch (*++str) {
-		case 'g': r->global = 1; break;
-		case 'p': r->print = 1; break;
-		case 's': r->symlink = 0; break;
-		case 'S': r->symlink = 1; break;
+		case 'g': r->global = true; break;
+		case 'p': r->print = true; break;
+		case 's': r->symlink = false; break;
+		case 'S': r->symlink = true; break;
 		case 0: goto done;
 		}
 	}
