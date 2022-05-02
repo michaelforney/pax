@@ -118,6 +118,9 @@ static const char *globexthdr_name;
 static struct extheader exthdr, globexthdr;
 static struct replstr *replstr;
 static time_t curtime;
+static char **pats;
+static size_t patslen;
+static bool *patsused;
 
 static void
 fatal(const char *fmt, ...)
@@ -711,6 +714,56 @@ done:
 	end = &r->next;
 }
 
+static int
+match(struct header *h)
+{
+	static struct {
+		char *name;
+		size_t namelen;
+	} *dirs, *d;
+	static size_t dirslen;
+	size_t i;
+
+	if (patslen == 0)
+		return 1;
+	if (!dflag) {
+		for (i = 0; i < dirslen; ++i) {
+			if (h->namelen >= dirs[i].namelen && memcmp(h->name, dirs[i].name, dirs[i].namelen) == 0)
+				return !cflag;
+		}
+	}
+	for (i = 0; i < patslen; ++i) {
+		if (nflag && patsused[i])
+			continue;
+		switch (fnmatch(pats[i], h->name, FNM_PATHNAME | FNM_PERIOD)) {
+		case 0:
+			patsused[i] = 1;
+			if (!dflag && h->type == DIRTYPE) {
+				if ((dirslen & (dirslen - 1)) == 0) {
+					dirs = reallocarray(dirs, dirslen ? dirslen * 2 : 32, sizeof(dirs[0]));
+					if (!dirs)
+						fatal(NULL);
+				}
+				d = &dirs[dirslen++];
+				d->namelen = h->namelen;
+				d->name = malloc(d->namelen + 1);
+				if (!d->name)
+					fatal(NULL);
+				memcpy(d->name, h->name, h->namelen);
+				/* add trailing slash if not already present */
+				if (d->name[d->namelen - 1] != '/')
+					d->name[d->namelen++] = '/';
+			}
+			return !cflag;
+		case FNM_NOMATCH:
+			break;
+		default:
+			fatal("fnmatch error");
+		}
+	}
+	return cflag;
+}
+
 static void
 list(struct header *h)
 {
@@ -720,11 +773,14 @@ list(struct header *h)
 	const char *uname, *gname, *timefmt;
 	struct tm *tm;
 
+	skip(stdin, ROUNDUP(h->size, 512));
+	if (!match(h))
+		return;
 	if (opt.listopt)
 		fatal("listopt is not supported");
 	if (!vflag) {
 		printf("%s\n", h->name);
-		goto skip;
+		return;
 	}
 	memset(mode, '-', sizeof(mode) - 1);
 	mode[10] = '\0';
@@ -772,8 +828,6 @@ list(struct header *h)
 	case SYMTYPE: printf(" -> %s", h->link); break;
 	}
 	putchar('\n');
-skip:
-	skip(stdin, ROUNDUP(h->size, 512));
 }
 
 static void
@@ -823,6 +877,8 @@ extract(struct header *h)
 	off_t size;
 	mode_t mode;
 
+	if (!match(h))
+		goto skip;
 	if (vflag)
 		fprintf(stderr, "%s\n", h->name);
 	retry = 1;
@@ -843,7 +899,7 @@ extract(struct header *h)
 			copyblock(buf, stdin, sizeof(buf), fd, sizeof(buf));
 		copyblock(buf, stdin, ROUNDUP(size, 512), fd, size);
 		close(fd);
-		break;
+		return;
 	case LNKTYPE:
 		if (link(h->link, h->name) != 0) {
 			if (retry && errno == ENOENT)
@@ -882,58 +938,8 @@ extract(struct header *h)
 		}
 		break;
 	}
-	if (h->type != REGTYPE)
-		skip(stdin, ROUNDUP(h->size, 512));
-}
-
-static int
-match(struct header *h, char *pats[], size_t patslen, char matched[])
-{
-	static struct {
-		char *name;
-		size_t namelen;
-	} *dirs, *d;
-	static size_t dirslen;
-	size_t i;
-
-	if (patslen == 0)
-		return 1;
-	if (!dflag) {
-		for (i = 0; i < dirslen; ++i) {
-			if (h->namelen >= dirs[i].namelen && memcmp(h->name, dirs[i].name, dirs[i].namelen) == 0)
-				return !cflag;
-		}
-	}
-	for (i = 0; i < patslen; ++i) {
-		if (nflag && matched[i])
-			continue;
-		switch (fnmatch(pats[i], h->name, FNM_PATHNAME | FNM_PERIOD)) {
-		case 0:
-			matched[i] = 1;
-			if (!dflag && h->type == DIRTYPE) {
-				if ((dirslen & (dirslen - 1)) == 0) {
-					dirs = reallocarray(dirs, dirslen ? dirslen * 2 : 32, sizeof(dirs[0]));
-					if (!dirs)
-						fatal(NULL);
-				}
-				d = &dirs[dirslen++];
-				d->namelen = h->namelen;
-				d->name = malloc(d->namelen + 1);
-				if (!d->name)
-					fatal(NULL);
-				memcpy(d->name, h->name, h->namelen);
-				/* add trailing slash if not already present */
-				if (h->name[h->namelen - 1] != '/')
-					d->name[d->namelen++] = '/';
-			}
-			return !cflag;
-		case FNM_NOMATCH:
-			break;
-		default:
-			fatal("fnmatch error");
-		}
-	}
-	return cflag;
+skip:
+	skip(stdin, ROUNDUP(h->size, 512));
 }
 
 int
@@ -943,7 +949,6 @@ main(int argc, char *argv[])
 	enum mode mode = LIST;
 	struct header hdr;
 	int (*readhdr)(FILE *, struct header *) = readpax;
-	char *matched;
 	size_t i;
 
 	ARGBEGIN {
@@ -1040,25 +1045,19 @@ main(int argc, char *argv[])
 		fatal("time:");
 	umask(0);
 
-	matched = calloc(1, argc);
-	if (!matched)
+	pats = argv;
+	patslen = argc;
+	patsused = calloc(1, argc);
+	if (!patsused)
 		fatal(NULL);
 	switch (mode) {
 	case LIST:
-		while (readhdr(stdin, &hdr)) {
-			if (match(&hdr, argv, argc, matched))
-				list(&hdr);
-			else
-				skip(stdin, ROUNDUP(hdr.size, 512));
-		}
+		while (readhdr(stdin, &hdr))
+			list(&hdr);
 		break;
 	case READ:
-		while (readhdr(stdin, &hdr)) {
-			if (match(&hdr, argv, argc, matched))
-				extract(&hdr);
-			else
-				skip(stdin, ROUNDUP(hdr.size, 512));
-		}
+		while (readhdr(stdin, &hdr))
+			extract(&hdr);
 		break;
 	case WRITE:
 		break;
@@ -1066,7 +1065,7 @@ main(int argc, char *argv[])
 		break;
 	}
 	for (i = 0; i < argc; ++i) {
-		if (!matched[i])
+		if (!patsused[i])
 			fatal("pattern not matched: %s", argv[i]);
 	}
 }
