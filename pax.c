@@ -911,12 +911,11 @@ match(struct header *h, char *pats[], size_t patslen, char matched[])
 		case 0:
 			matched[i] = 1;
 			if (!dflag && h->type == DIRTYPE) {
-				if (dirslen >= 32 && (dirslen & (dirslen - 1)) == 0)
-					dirs = reallocarray(dirs, dirslen, sizeof(dirs[0]) * 2);
-				else if (dirslen == 0)
-					dirs = reallocarray(dirs, 32, sizeof(dirs[0]));
-				if (!dirs)
-					fatal(NULL);
+				if ((dirslen & (dirslen - 1)) == 0) {
+					dirs = reallocarray(dirs, dirslen ? dirslen * 2 : 32, sizeof(dirs[0]));
+					if (!dirs)
+						fatal(NULL);
+				}
 				d = &dirs[dirslen++];
 				d->namelen = h->namelen;
 				d->name = malloc(d->namelen + 1);
