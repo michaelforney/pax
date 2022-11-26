@@ -61,6 +61,7 @@ struct header {
 	struct timespec atime, mtime, ctime;
 	char type;
 	char *link;
+	size_t linklen;
 	char *uname;
 	char *gname;
 	dev_t dev;
@@ -88,6 +89,7 @@ struct replstr {
 	char *new;
 	int global;
 	int print;
+	int symlink;
 	struct replstr *next;
 };
 
@@ -358,8 +360,10 @@ readustar(FILE *f, struct header *h)
 	
 	if (exthdr.fields & LINKPATH) {
 		h->link = exthdr.linkpath.str;
+		h->linklen = exthdr.linkpath.len;
 	} else if (globexthdr.fields & LINKPATH) {
 		h->link = globexthdr.linkpath.str;
+		h->linklen = globexthdr.linkpath.len;
 	} else {
 		linklen = strnlen(buf + 157, 100);
 		if (linklen == 100) {
@@ -371,6 +375,7 @@ readustar(FILE *f, struct header *h)
 		} else {
 			h->link = buf + 157;
 		}
+		h->linklen = linklen;
 	}
 	if (exthdr.fields & UNAME) {
 		h->uname = exthdr.uname.str;
@@ -399,13 +404,22 @@ readustar(FILE *f, struct header *h)
 	}
 
 	for (struct replstr *r = replstr; r; r = r->next) {
-		static struct strbuf namebuf;
+		static struct strbuf namebuf, linkbuf;
 
 		if (repl(r, &namebuf, h->name, h->namelen)) {
 			if (r->print)
 				fprintf(stderr, "%s >> %s\n", h->name, namebuf.str);
 			h->name = namebuf.str;
 			h->namelen = namebuf.len;
+			break;
+		}
+		if (h->type != LNKTYPE && (h->type != SYMTYPE || !r->symlink))
+			continue;
+		if (repl(r, &linkbuf, h->link, h->linklen)) {
+			if (r->print)
+				fprintf(stderr, "%s >> %s\n", h->link, linkbuf.str);
+			h->link = linkbuf.str;
+			h->linklen = linkbuf.len;
 			break;
 		}
 	}
@@ -671,10 +685,13 @@ parsereplstr(char *str)
 	r->next = NULL;
 	r->global = 0;
 	r->print = 0;
+	r->symlink = 0;
 	for (;;) {
 		switch (*++str) {
 		case 'g': r->global = 1; break;
 		case 'p': r->print = 1; break;
+		case 's': r->symlink = 0; break;
+		case 'S': r->symlink = 1; break;
 		case 0: goto done;
 		}
 	}
