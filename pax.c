@@ -390,7 +390,7 @@ readustar(FILE *f, struct header *h)
 		if (!memchr(h->gname, '\0', 32))
 			fatal("gname is not NUL-terminated");
 	}
-	if (h->type == '3' || h->type == '4') {
+	if (h->type == CHRTYPE || h->type == BLKTYPE) {
 		unsigned major, minor;
 
 		major = octnum(buf + 329, 8);
@@ -742,7 +742,7 @@ list(struct header *h)
 	if (!tm)
 		fatal("localtime:");
 	strftime(time, sizeof(time), timefmt, tm);
-	if (h->type == '3' || h->type == '4')
+	if (h->type == CHRTYPE || h->type == BLKTYPE)
 		snprintf(info, sizeof(info), "%u, %u", major(h->dev), minor(h->dev));
 	else
 		snprintf(info, sizeof(info), "%ju", (uintmax_t)h->size);
