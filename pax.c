@@ -1,4 +1,4 @@
-#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
 #include <assert.h>
 #include <errno.h>
 #include <limits.h>
@@ -818,6 +818,7 @@ extract(struct header *h)
 	int fd;
 	char buf[8192];
 	off_t size;
+	mode_t mode;
 
 	if (vflag)
 		fprintf(stderr, "%s\n", h->name);
@@ -855,6 +856,18 @@ extract(struct header *h)
 					break;
 			}
 			fatal("symlink %s:", h->name);
+		}
+		break;
+	case CHRTYPE:
+	case BLKTYPE:
+		mode = (h->type == CHRTYPE ? S_IFCHR : S_IFBLK) | h->mode;
+		if (mknod(h->name, mode, h->dev) != 0) {
+			if (errno == ENOENT) {
+				mkdirp(h->name, h->namelen);
+				if (mknod(h->name, mode, h->dev) == 0)
+					break;
+			}
+			fatal("mknod %s:", h->name);
 		}
 		break;
 	case DIRTYPE:
