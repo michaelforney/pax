@@ -60,7 +60,7 @@ struct header {
 	off_t size;
 	struct timespec atime, mtime, ctime;
 	char type;
-	char *linkname;
+	char *link;
 	char *uname;
 	char *gname;
 	dev_t dev;
@@ -357,19 +357,19 @@ readustar(FILE *f, struct header *h)
 		h->type = REGTYPE;
 	
 	if (exthdr.fields & LINKPATH) {
-		h->linkname = exthdr.linkpath.str;
+		h->link = exthdr.linkpath.str;
 	} else if (globexthdr.fields & LINKPATH) {
-		h->linkname = globexthdr.linkpath.str;
+		h->link = globexthdr.linkpath.str;
 	} else {
 		linklen = strnlen(buf + 157, 100);
 		if (linklen == 100) {
-			h->linkname = malloc(linklen + 1);
-			if (!h->linkname)
+			h->link = malloc(linklen + 1);
+			if (!h->link)
 				fatal(NULL);
-			memcpy(h->linkname, buf + 157, linklen);
-			h->linkname[linklen] = '\0';
+			memcpy(h->link, buf + 157, linklen);
+			h->link[linklen] = '\0';
 		} else {
-			h->linkname = buf + 157;
+			h->link = buf + 157;
 		}
 	}
 	if (exthdr.fields & UNAME) {
@@ -748,8 +748,8 @@ list(struct header *h)
 		snprintf(info, sizeof(info), "%ju", (uintmax_t)h->size);
 	printf("%s %2d %-8s %-8s %9s %s %s", mode, 1, uname, gname, info, time, h->name);
 	switch (h->type) {
-	case LNKTYPE: printf(" == %s", h->linkname); break;
-	case SYMTYPE: printf(" -> %s", h->linkname); break;
+	case LNKTYPE: printf(" == %s", h->link); break;
+	case SYMTYPE: printf(" -> %s", h->link); break;
 	}
 	putchar('\n');
 skip:
@@ -821,20 +821,20 @@ extract(struct header *h)
 		close(fd);
 		break;
 	case LNKTYPE:
-		if (link(h->linkname, h->name) != 0) {
+		if (link(h->link, h->name) != 0) {
 			if (errno == ENOENT) {
 				mkdirp(h->name, h->namelen);
-				if (link(h->linkname, h->name) == 0)
+				if (link(h->link, h->name) == 0)
 					break;
 			}
 			fatal("link %s:", h->name);
 		}
 		break;
 	case SYMTYPE:
-		if (symlink(h->linkname, h->name) != 0) {
+		if (symlink(h->link, h->name) != 0) {
 			if (errno == ENOENT) {
 				mkdirp(h->name, h->namelen);
-				if (symlink(h->linkname, h->name) == 0)
+				if (symlink(h->link, h->name) == 0)
 					break;
 			}
 			fatal("symlink %s:", h->name);
