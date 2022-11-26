@@ -815,23 +815,26 @@ mkdirp(char *name, size_t len)
 static void
 extract(struct header *h)
 {
-	int fd;
+	int fd, retry;
 	char buf[8192];
 	off_t size;
 	mode_t mode;
 
 	if (vflag)
 		fprintf(stderr, "%s\n", h->name);
+	retry = 1;
+	if (0) {
+	retry:
+		retry = 0;
+		mkdirp(h->name, h->namelen);
+	}
 	switch (h->type) {
 	case REGTYPE:
 		fd = open(h->name, O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, h->mode);
 		if (fd < 0) {
-			if (errno == ENOENT) {
-				mkdirp(h->name, h->namelen);
-				fd = open(h->name, O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, h->mode);
-			}
-			if (fd < 0)
-				fatal("open %s:", h->name);
+			if (retry && errno == ENOENT)
+				goto retry;
+			fatal("open %s:", h->name);
 		}
 		for (size = h->size; size > sizeof(buf); size -= sizeof(buf))
 			copyblock(buf, stdin, sizeof(buf), fd, sizeof(buf));
@@ -840,21 +843,15 @@ extract(struct header *h)
 		break;
 	case LNKTYPE:
 		if (link(h->link, h->name) != 0) {
-			if (errno == ENOENT) {
-				mkdirp(h->name, h->namelen);
-				if (link(h->link, h->name) == 0)
-					break;
-			}
+			if (retry && errno == ENOENT)
+				goto retry;
 			fatal("link %s:", h->name);
 		}
 		break;
 	case SYMTYPE:
 		if (symlink(h->link, h->name) != 0) {
-			if (errno == ENOENT) {
-				mkdirp(h->name, h->namelen);
-				if (symlink(h->link, h->name) == 0)
-					break;
-			}
+			if (retry && errno == ENOENT)
+				goto retry;
 			fatal("symlink %s:", h->name);
 		}
 		break;
@@ -862,31 +859,22 @@ extract(struct header *h)
 	case BLKTYPE:
 		mode = (h->type == CHRTYPE ? S_IFCHR : S_IFBLK) | h->mode;
 		if (mknod(h->name, mode, h->dev) != 0) {
-			if (errno == ENOENT) {
-				mkdirp(h->name, h->namelen);
-				if (mknod(h->name, mode, h->dev) == 0)
-					break;
-			}
+			if (retry && errno == ENOENT)
+				goto retry;
 			fatal("mknod %s:", h->name);
 		}
 		break;
 	case DIRTYPE:
 		if (mkdir(h->name, h->mode) != 0) {
-			if (errno == ENOENT) {
-				mkdirp(h->name, h->namelen);
-				if (mkdir(h->name, h->mode) == 0)
-					break;
-			}
+			if (retry && errno == ENOENT)
+				goto retry;
 			fatal("mkdir %s:", h->name);
 		}
 		break;
 	case FIFOTYPE:
 		if (mkfifo(h->name, h->mode) != 0) {
-			if (errno == ENOENT) {
-				mkdirp(h->name, h->namelen);
-				if (mkfifo(h->name, h->mode) == 0)
-					break;
-			}
+			if (retry && errno == ENOENT)
+				goto retry;
 			fatal("mkfifo %s:", h->name);
 		}
 		break;
