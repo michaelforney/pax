@@ -956,6 +956,7 @@ main(int argc, char *argv[])
 		aflag = 1;
 		break;
 	case 'b':
+		EARGF(usage());
 		break;
 	case 'c':
 		cflag = 1;
