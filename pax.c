@@ -44,11 +44,12 @@ enum field {
 	GID      = 1<<2,
 	GNAME    = 1<<3,
 	LINKPATH = 1<<4,
-	MTIME    = 1<<5,
-	PATH     = 1<<6,
-	SIZE     = 1<<7,
-	UID      = 1<<8,
-	UNAME    = 1<<9,
+	MODE     = 1<<5,
+	MTIME    = 1<<6,
+	PATH     = 1<<7,
+	SIZE     = 1<<8,
+	UID      = 1<<9,
+	UNAME    = 1<<10,
 };
 
 struct header {
@@ -104,6 +105,7 @@ static int uflag;
 static int vflag;
 static int Xflag;
 static int follow;
+static int preserve = ATIME | MTIME;
 static struct {
 	enum field delete;
 	int linkdata;
@@ -978,24 +980,16 @@ main(int argc, char *argv[])
 		parseopts(EARGF(usage()));
 		break;
 	case 'p':
-		arg = EARGF(usage());
-		while (*arg) {
+		for (arg = EARGF(usage()); *arg; ++arg) {
 			switch (*arg) {
-			case 'a':
-				break;
-			case 'e':
-				break;
-			case 'm':
-				break;
-			case 'o':
-				break;
-			case 'p':
-				break;
-			default:
-				break;
+			case 'a': preserve &= ~ATIME; break;
+			case 'e': preserve = ~0; break;
+			case 'm': preserve &= ~MTIME; break;
+			case 'o': preserve |= UID | GID; break;
+			case 'p': preserve |= MODE; break;
+			default: fatal("unknown -p option");
 			}
 		}
-		//preserve = 
 		break;
 	case 'r':
 		mode |= READ;
