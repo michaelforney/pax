@@ -210,8 +210,16 @@ copy(FILE *r, off_t nr, FILE *w, off_t nw)
 static void
 skip(FILE *f, off_t n)
 {
+	static bool seekfail;
 	char b[8192];
 
+	if (n == 0)
+		return;
+	if (!seekfail) {
+		if (fseeko(f, n, SEEK_CUR) == 0)
+			return;
+		seekfail = true;
+	}
 	for (; n > sizeof b; n -= sizeof b)
 		copyblock(b, f, sizeof b, NULL, 0);
 	copyblock(b, f, n, NULL, 0);
