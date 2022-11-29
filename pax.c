@@ -299,8 +299,7 @@ readustar(FILE *f, struct header *h)
 {
 	static char buf[512];
 	size_t namelen, prefixlen, linklen;
-	unsigned long sum, chksum;
-	int zero;
+	unsigned long chksum;
 	size_t i;
 
 	if (fread(buf, 1, sizeof(buf), f) != sizeof(buf)) {
@@ -308,18 +307,15 @@ readustar(FILE *f, struct header *h)
 			fatal("read:");
 		fatal("archive truncated");
 	}
-	sum = 0;
-	zero = 1;
-	for (i = 0; i < sizeof(buf); ++i) {
-		sum += (i < 148 || i > 155) ? buf[i] : ' ';
-		if (buf[i])
-			zero = 0;
-	}
-	if (zero)
+	chksum = 0;
+	for (i = 0; i < 512; ++i)
+		chksum += buf[i];
+	if (chksum == 0)
 		return 0;
-	chksum = octnum(buf + 148, 8);
-	if (sum != chksum)
-		fatal("bad checksum: %lu != %lu", sum, chksum);
+	for (i = 148; i < 156; ++i)
+		chksum += ' ' - buf[i];
+	if (chksum != octnum(buf + 148, 8))
+		fatal("bad checksum");
 	if (exthdr.fields & PATH) {
 		h->name = exthdr.path.str;
 		h->namelen = exthdr.path.len;
