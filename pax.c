@@ -121,6 +121,7 @@ static time_t curtime;
 static char **pats;
 static size_t patslen;
 static bool *patsused;
+static int dest = AT_FDCWD;
 
 static void
 fatal(const char *fmt, ...)
@@ -887,7 +888,7 @@ extract(struct header *h)
 	}
 	switch (h->type) {
 	case REGTYPE:
-		fd = open(h->name, O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, h->mode);
+		fd = openat(dest, h->name, O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, h->mode);
 		if (fd < 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
@@ -899,14 +900,14 @@ extract(struct header *h)
 		close(fd);
 		return;
 	case LNKTYPE:
-		if (link(h->link, h->name) != 0) {
+		if (linkat(dest, h->link, dest, h->name, 0) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
 			fatal("link %s:", h->name);
 		}
 		break;
 	case SYMTYPE:
-		if (symlink(h->link, h->name) != 0) {
+		if (symlinkat(h->link, dest, h->name) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
 			fatal("symlink %s:", h->name);
@@ -915,21 +916,21 @@ extract(struct header *h)
 	case CHRTYPE:
 	case BLKTYPE:
 		mode = (h->type == CHRTYPE ? S_IFCHR : S_IFBLK) | h->mode;
-		if (mknod(h->name, mode, h->dev) != 0) {
+		if (mknodat(dest, h->name, mode, h->dev) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
 			fatal("mknod %s:", h->name);
 		}
 		break;
 	case DIRTYPE:
-		if (mkdir(h->name, h->mode) != 0) {
+		if (mkdirat(dest, h->name, h->mode) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
 			fatal("mkdir %s:", h->name);
 		}
 		break;
 	case FIFOTYPE:
-		if (mkfifo(h->name, h->mode) != 0) {
+		if (mkfifoat(dest, h->name, h->mode) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
 			fatal("mkfifo %s:", h->name);
