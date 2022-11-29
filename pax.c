@@ -320,6 +320,8 @@ repl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
 	if (!flags)
 		return 0;
 	b->str[b->len] = 0;
+	if (r->print)
+		fprintf(stderr, "%s >> %s\n", old, b->str);
 	return 1;
 }
 
@@ -490,8 +492,6 @@ readustar(FILE *f, struct header *h)
 		static struct strbuf namebuf, linkbuf;
 
 		if (repl(r, &namebuf, h->name, h->namelen)) {
-			if (r->print)
-				fprintf(stderr, "%s >> %s\n", h->name, namebuf.str);
 			h->name = namebuf.str;
 			h->namelen = namebuf.len;
 			break;
@@ -499,8 +499,6 @@ readustar(FILE *f, struct header *h)
 		if (h->type != LNKTYPE && (h->type != SYMTYPE || !r->symlink))
 			continue;
 		if (repl(r, &linkbuf, h->link, h->linklen)) {
-			if (r->print)
-				fprintf(stderr, "%s >> %s\n", h->link, linkbuf.str);
 			h->link = linkbuf.str;
 			h->linklen = linkbuf.len;
 			break;
