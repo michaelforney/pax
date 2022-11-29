@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <fnmatch.h>
 #include <grp.h>
@@ -56,6 +57,7 @@ enum field {
 struct header {
 	char *name;
 	size_t namelen;
+	char *slash;  /* tar-specific, pre-calculated split point between name and prefix */
 	mode_t mode;
 	uid_t uid;
 	gid_t gid;
@@ -67,6 +69,8 @@ struct header {
 	char *uname;
 	char *gname;
 	dev_t dev;
+	FILE *file;
+	int pad;
 };
 
 struct strbuf {
@@ -95,6 +99,18 @@ struct replstr {
 	struct replstr *next;
 };
 
+struct file {
+	size_t namelen;
+	size_t pathlen;
+	struct file *next;
+	char name[];
+};
+
+struct filelist {
+	FILE *input;
+	struct file *pending;
+};
+
 static int aflag;
 static int cflag;
 static int dflag;
@@ -121,6 +137,7 @@ static time_t curtime;
 static char **pats;
 static size_t patslen;
 static bool *patsused;
+static struct filelist files;
 static int dest = AT_FDCWD;
 
 static void
@@ -188,13 +205,14 @@ sbufcat(struct strbuf *b, const char *s, size_t n, size_t a)
 static void
 copyblock(char *b, FILE *r, size_t nr, FILE *w, size_t nw)
 {
-	assert(nw <= nr);
 	if (fread(b, 1, nr, r) != nr) {
 		if (ferror(r))
 			fatal("read:");
 		fatal("archive truncated");
 	}
-	if (fwrite(b, 1, nw, w) != nw)
+	if (nw > nr)
+		memset(b + nr, 0, nw - nr);
+	if (nw && fwrite(b, 1, nw, w) != nw)
 		fatal("write:");
 }
 
@@ -504,6 +522,8 @@ readustar(FILE *f, struct header *h)
 			break;
 		}
 	}
+	h->file = f;
+	h->pad = 512;
 
 	return 1;
 }
@@ -659,6 +679,347 @@ readpax(FILE *f, struct header *h)
 	return 0;
 }
 
+static char *
+splitname(char *name, size_t namelen)
+{
+	char *slash;
+
+	if (namelen > 256)
+		return NULL;
+	slash = memchr(name + namelen - 100, '/', 100);
+	if (!slash || slash - name > 155)
+		return NULL;
+	return slash;
+}
+
+static void
+closeustar(FILE *f)
+{
+	char pad[512];
+
+	memset(pad, 0, 512);
+	if (fwrite(pad, 512, 1, f) != 1)
+		fatal("write:");
+	if (fwrite(pad, 512, 1, f) != 1)
+		fatal("write:");
+}
+
+static void
+writeustar(FILE *f, struct header *h)
+{
+	char buf[8192], *slash;
+	unsigned long sum;
+	int i;
+
+	if (!h) {
+		closeustar(f);
+		return;
+	}
+	slash = h->slash;
+	if (!slash && h->namelen > 100) {
+		slash = splitname(h->name, h->namelen);
+		if (!slash)
+			fatal("file name is too long: %s\n", h->name);
+	}
+	if (slash) {
+		*slash = '\0';
+		strncpy(buf, slash + 1, 100);
+		strncpy(buf + 345, h->name, 155);
+	} else {
+		strncpy(buf, h->name, 100);
+		memset(buf + 345, 0, 155);
+	}
+	if (h->mode < 0 || h->mode > 07777777) {
+		fatal("mode is too large: %ju", (uintmax_t)h->mode);
+		exit(1);
+	}
+	snprintf(buf + 100, 8, "%.7lo", (unsigned long)h->mode);
+	if (h->uid < 0 || h->uid > 07777777)
+		fatal("uid is too large: %ju", (uintmax_t)h->uid);
+	snprintf(buf + 108, 8, "%.7lo", (unsigned long)h->uid);
+	if (h->gid < 0 || h->gid > 07777777)
+		fatal("gid is too large: %ju", (uintmax_t)h->gid);
+	snprintf(buf + 116, 8, "%.7lo", (unsigned long)h->gid);
+	if (h->size < 0 || h->size > 077777777777)
+		fatal("size is too large: %ju", (uintmax_t)h->size);
+	snprintf(buf + 124, 12, "%.11llo", (unsigned long long)h->size);
+	if (h->mtime.tv_sec < 0 || h->mtime.tv_sec > 077777777777)
+		fatal("mtime is too large: %ju", (uintmax_t)h->mtime.tv_sec);
+	snprintf(buf + 136, 12, "%.11llo", (unsigned long long)h->mtime.tv_sec);
+	memset(buf + 148, ' ', 8);
+	buf[156] = h->type;
+	if (h->linklen > 100)
+		fatal("link name is too long: %s\n", h->link);
+	strncpy(buf + 157, h->link, 100);
+	memcpy(buf + 257, "ustar", 6);
+	memcpy(buf + 263, "00", 2);
+	if (strlen(h->uname) > 32)
+		fatal("user name is too long: %s\n", h->uname);
+	strncpy(buf + 265, h->uname, 32);
+	if (strlen(h->gname) > 32)
+		fatal("group name is too long: %s\n", h->gname);
+	strncpy(buf + 297, h->gname, 32);
+	if (major(h->dev) > 07777777)
+		fatal("device major is too large: %ju\n", (uintmax_t)major(h->dev));
+	snprintf(buf + 329, 8, "%.7lo", (unsigned long)major(h->dev));
+	if (minor(h->dev) > 07777777)
+		fatal("device minor is too large: %ju\n", (uintmax_t)minor(h->dev));
+	snprintf(buf + 337, 8, "%.7lo", (unsigned long)minor(h->dev));
+	memset(buf + 500, 0, 12);
+	sum = 0;
+	for (i = 0; i < 512; ++i)
+		sum += buf[i];
+	snprintf(buf + 148, 8, "%.7lo", sum & 07777777);
+	if (fwrite(buf, 512, 1, f) != 1)
+		fatal("write:");
+	if (h->file)
+		copy(h->file, h->size, f, ROUNDUP(h->size, 512));
+}
+
+static int
+writerec(FILE *f, const char *fmt, ...)
+{
+	static struct strbuf buf;
+	va_list ap;
+	int len, i, n, m;
+
+	va_start(ap, fmt);
+	len = vsnprintf(buf.str, buf.cap, fmt, ap);
+	va_end(ap);
+	if (len < 0)
+		fatal("vsnprintf:");
+	buf.len = 0;
+	sbufalloc(&buf, len + 1, 512);
+	va_start(ap, fmt);
+	len = vsnprintf(buf.str, buf.cap, fmt, ap);
+	va_end(ap);
+	if (len < 0)
+		fatal("vsnprintf:");
+	if (len >= buf.cap)
+		fatal("vsnprintf: formatted size changed");
+	i = 0;
+	m = 1;
+	for (n = len; n > 0; n /= 10) {
+		m *= 10;
+		++i;
+	}
+	n = i + 1 + len + 1;
+	if (n >= m)
+		++n;
+	return fprintf(f, "%d %.*s\n", n, len, buf.str);
+}
+
+static void
+writepax(FILE *f, struct header *h)
+{
+	static FILE *ext;
+	static char *extbuf;
+	static size_t extlen;
+	struct header exthdr;
+
+	if (!h) {
+		closeustar(f);
+		return;
+	}
+	if (vflag)
+		fprintf(stderr, "%s\n", h->name);
+	if (!ext) {
+		ext = open_memstream(&extbuf, &extlen);
+		if (!ext)
+			fatal("open_memstream:");
+	}
+	if (h->namelen > 100) {
+		h->slash = splitname(h->name, h->namelen);
+		if (!h->slash)
+			writerec(ext, "name=%s", h->name);
+	}
+	if (h->uid > 07777777) {
+		writerec(ext, "uid=%ju", (uintmax_t)h->uid);
+		h->uid = 0;
+	}
+	if (h->gid > 07777777) {
+		writerec(ext, "gid=%ju", (uintmax_t)h->gid);
+		h->gid = 0;
+	}
+	if (h->size > 077777777777) {
+		writerec(ext, "size=%ju", (uintmax_t)h->size);
+		h->size = 0;
+	}
+	if (h->mtime.tv_sec > 077777777777 || h->mtime.tv_nsec != 0) {
+		if (h->mtime.tv_nsec != 0) {
+			writerec(ext, "mtime=%ju.%.9ld",
+				(uintmax_t)h->mtime.tv_sec, h->mtime.tv_nsec % 1000000000);
+		} else {
+			writerec(ext, "mtime=%ju", (uintmax_t)h->mtime.tv_sec);
+		}
+		h->mtime.tv_sec = 0;
+		h->mtime.tv_nsec = 0;
+	}
+	if (strlen(h->uname) > 32) {
+		writerec(ext, "uname=%s", h->uname);
+		h->uname = "";
+	}
+	if (strlen(h->gname) > 32) {
+		writerec(ext, "gname=%s", h->gname);
+		h->gname = "";
+	}
+	fflush(ext);
+	if (ferror(ext))
+		fatal("failed to write extended header");
+	if (extlen > 0) {
+		memset(&exthdr, 0, sizeof exthdr);
+		exthdr.name = "pax_extended_header";
+		exthdr.namelen = 20;
+		exthdr.link = "";
+		exthdr.uname = "";
+		exthdr.gname = "";
+		exthdr.size = extlen;
+		exthdr.type = 'x';
+		exthdr.file = fmemopen(extbuf, extlen, "r");
+		if (!exthdr.file)
+			fatal("fmemopen:");
+		exthdr.pad = 1;
+		writeustar(f, &exthdr);
+		fclose(exthdr.file);
+		fseek(ext, 0, SEEK_SET);
+	}
+	writeustar(f, h);
+}
+
+static void
+filepush(struct filelist *files, const char *name, size_t pathlen)
+{
+	struct file *f;
+	size_t namelen;
+
+	namelen = strlen(name);
+	f = malloc(sizeof *f + namelen + 1);
+	if (!f)
+		fatal(NULL);
+	memcpy(f->name, name, namelen + 1);
+	f->namelen = namelen;
+	f->pathlen = pathlen;
+	f->next = files->pending;
+	files->pending = f;
+}
+
+static int
+readfile(FILE *f, struct header *h)
+{
+	static struct strbuf name, link;
+	struct stat st;
+	int flags;
+	DIR *dir;
+	struct dirent *d;
+	ssize_t ret;
+
+	flags = follow == 'L' ? 0 : AT_SYMLINK_NOFOLLOW;
+	if (files.pending) {
+		struct file *f;
+
+		f = files.pending;
+		files.pending = f->next;
+		assert(f->pathlen <= name.len);
+		name.len = f->pathlen;
+		sbufcat(&name, f->name, f->namelen, 1024);
+		if (follow == 'H' && f->pathlen > 0)
+			flags &= ~AT_SYMLINK_NOFOLLOW;
+		free(f);
+	} else {
+		if (!files.input)
+			return 0;
+		ret = getline(&name.str, &name.cap, files.input);
+		if (ret < 0) {
+			if (ferror(files.input))
+				fatal("getline:");
+			return 0;
+		}
+		if (ret > 0 && name.str[ret - 1] == '\n')
+			name.str[--ret] = '\0';
+		name.len = ret;
+	}
+
+	if (fstatat(AT_FDCWD, name.str, &st, flags) != 0)
+		fatal("stat %s:", name.str);
+	h->name = name.str;
+	h->namelen = name.len;
+	h->slash = NULL;
+	h->mode = st.st_mode;
+	h->uid = st.st_uid;
+	h->gid = st.st_gid;
+	h->size = 0;
+	h->atime = st.st_atim;
+	h->mtime = st.st_mtim;
+	h->ctime = st.st_ctim;
+	h->uname = "";
+	h->gname = "";
+	h->link = "";
+	h->linklen = 0;
+	h->dev = 0;
+	h->file = NULL;
+	switch (st.st_mode & S_IFMT) {
+	case S_IFREG:
+		h->type = REGTYPE;
+		h->size = st.st_size;
+		h->file = fopen(name.str, "r");
+		if (!h->file)
+			fatal("open %s:", name.str);
+		h->pad = 1;
+		break;
+	case S_IFLNK:
+		h->type = SYMTYPE;
+		link.len = 0;
+		sbufalloc(&link, 1024, 1024);
+		for (;;) {
+			ret = readlink(name.str, link.str, link.cap - 1);
+			if (ret < 0)
+				fatal("readlink %s:", name.str);
+			if (ret < link.cap)
+				break;
+			if (link.cap > SSIZE_MAX / 2)
+				fatal("symlink target is too long");
+			sbufalloc(&link, link.cap * 2, 1024);
+		}
+		link.str[ret] = '\0';
+		link.len = ret;
+		h->link = link.str;
+		h->linklen = link.len;
+		break;
+	case S_IFCHR:
+		h->type = CHRTYPE;
+		h->dev = st.st_rdev;
+		break;
+	case S_IFBLK:
+		h->type = BLKTYPE;
+		h->dev = st.st_rdev;
+		break;
+	case S_IFDIR:
+		h->type = DIRTYPE;
+		if (name.str[name.len - 1] != '/')
+			sbufcat(&name, "/", 1, 1024);
+		dir = opendir(name.str);
+		if (!dir)
+			fatal("opendir %s:", name.str);
+		for (;;) {
+			errno = 0;
+			d = readdir(dir);
+			if (!d)
+				break;
+			if (strcmp(d->d_name, ".") == 0 || strcmp(d->d_name, "..") == 0)
+				continue;
+			filepush(&files, d->d_name, name.len);
+		}
+		if (errno != 0)
+			fatal("readdir %s:", name.str);
+		closedir(dir);
+		break;
+	case S_IFIFO:
+		h->type = FIFOTYPE;
+		break;
+	}
+	return 1;
+}
+
 static void
 usage(void)
 {
@@ -799,7 +1160,7 @@ done:
 }
 
 static void
-list(struct header *h)
+listhdr(FILE *f, struct header *h)
 {
 	char mode[11], time[13], info[23];
 	char unamebuf[(sizeof(uid_t) * CHAR_BIT + 2) / 3 + 1];
@@ -807,7 +1168,9 @@ list(struct header *h)
 	const char *uname, *gname, *timefmt;
 	struct tm *tm;
 
-	skip(stdin, ROUNDUP(h->size, 512));
+	if (!h)
+		return;
+	skip(h->file, ROUNDUP(h->size, 512));
 	if (opt.listopt)
 		fatal("listopt is not supported");
 	if (!vflag) {
@@ -880,12 +1243,14 @@ mkdirp(char *name, size_t len)
 }
 
 static void
-extract(struct header *h)
+writefile(FILE *unused, struct header *h)
 {
 	FILE *f;
 	int fd, retry;
 	mode_t mode;
 
+	if (!h)
+		return;
 	if (vflag)
 		fprintf(stderr, "%s\n", h->name);
 	retry = 1;
@@ -905,7 +1270,7 @@ extract(struct header *h)
 		f = fdopen(fd, "w");
 		if (!f)
 			fatal("open %s:", h->name);
-		copy(stdin, ROUNDUP(h->size, 512), f, h->size);
+		copy(h->file, ROUNDUP(h->size, h->pad), f, h->size);
 		fclose(f);
 		return;
 	case LNKTYPE:
@@ -946,15 +1311,17 @@ extract(struct header *h)
 		}
 		break;
 	}
-	skip(stdin, ROUNDUP(h->size, 512));
+	skip(h->file, ROUNDUP(h->size, 512));
 }
 
 int
 main(int argc, char *argv[])
 {
-	const char *name = NULL, *arg;
+	const char *name = NULL, *arg, *format = "pax";
 	enum mode mode = LIST;
 	struct header hdr;
+	int (*readhdr)(FILE *, struct header *) = readpax;
+	void (*writehdr)(FILE *, struct header *) = listhdr;
 	size_t i;
 
 	ARGBEGIN {
@@ -1022,7 +1389,7 @@ main(int argc, char *argv[])
 		mode |= WRITE;
 		break;
 	case 'x':
-		EARGF(usage());
+		format = EARGF(usage());
 		break;
 	case 'X':
 		Xflag = 1;
@@ -1031,40 +1398,54 @@ main(int argc, char *argv[])
 		usage();
 	} ARGEND;
 
-	if (name) {
-		if (mode == COPY)
-			usage();
-		if (mode == WRITE) {
-		} else if (strcmp(name, "-") != 0) {
-			if (!freopen(name, "r", stdin))
-				fatal("open %s:", name);
-		}
-	}
-
 	curtime = time(NULL);
 	if (curtime == (time_t)-1)
 		fatal("time:");
 	umask(0);
 
-	pats = argv;
-	patslen = argc;
-	patsused = calloc(1, argc);
-	if (!patsused)
-		fatal(NULL);
 	switch (mode) {
-	case LIST:
-		while (readpax(stdin, &hdr))
-			list(&hdr);
-		break;
 	case READ:
-		while (readpax(stdin, &hdr))
-			extract(&hdr);
+		writehdr = writefile;
+		/* fallthrough */
+	case LIST:
+		if (name && strcmp(name, "-") != 0 && !freopen(name, "r", stdin))
+			fatal("open %s:", name);
+		pats = argv;
+		patslen = argc;
+		patsused = calloc(1, argc);
+		if (!patsused)
+			fatal(NULL);
 		break;
 	case WRITE:
+		if (name && strcmp(name, "-") != 0 && !freopen(name, "w", stdout))
+			fatal("open %s:", name);
+		if (strcmp(format, "ustar") == 0)
+			writehdr = writeustar;
+		else if (strcmp(format, "pax") == 0)
+			writehdr = writepax;
+		else
+			fatal("unsupported archive format '%s'", arg);
 		break;
 	case COPY:
+		if (name || argc == 0)
+			usage();
+		dest = open(argv[--argc], O_SEARCH|O_DIRECTORY);
+		if (dest < 0)
+			fatal("open %s:", argv[argc]);
+		writehdr = writefile;
 		break;
 	}
+	if (mode & WRITE) {
+		readhdr = readfile;
+		for (i = 0; i < argc; ++i)
+			filepush(&files, argv[i], 0);
+		if (argc == 0)
+			files.input = stdin;
+	}
+
+	while (readhdr(stdin, &hdr))
+		writehdr(stdout, &hdr);
+	writehdr(stdout, NULL);
 	for (i = 0; i < patslen; ++i) {
 		if (!patsused[i])
 			fatal("pattern not matched: %s", pats[i]);
