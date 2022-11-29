@@ -102,6 +102,7 @@ struct replstr {
 struct file {
 	size_t namelen;
 	size_t pathlen;
+	dev_t dev;
 	struct file *next;
 	char name[];
 };
@@ -887,7 +888,7 @@ writepax(FILE *f, struct header *h)
 }
 
 static void
-filepush(struct filelist *files, const char *name, size_t pathlen)
+filepush(struct filelist *files, const char *name, size_t pathlen, dev_t dev)
 {
 	struct file *f;
 	size_t namelen;
@@ -899,6 +900,7 @@ filepush(struct filelist *files, const char *name, size_t pathlen)
 	memcpy(f->name, name, namelen + 1);
 	f->namelen = namelen;
 	f->pathlen = pathlen;
+	f->dev = dev;
 	f->next = files->pending;
 	files->pending = f;
 }
@@ -912,7 +914,9 @@ readfile(FILE *f, struct header *h)
 	DIR *dir;
 	struct dirent *d;
 	ssize_t ret;
+	dev_t dev;
 
+next:
 	flags = follow == 'L' ? 0 : AT_SYMLINK_NOFOLLOW;
 	if (files.pending) {
 		struct file *f;
@@ -924,6 +928,7 @@ readfile(FILE *f, struct header *h)
 		sbufcat(&name, f->name, f->namelen, 1024);
 		if (follow == 'H' && f->pathlen > 0)
 			flags &= ~AT_SYMLINK_NOFOLLOW;
+		dev = f->dev;
 		free(f);
 	} else {
 		if (!files.input)
@@ -937,10 +942,13 @@ readfile(FILE *f, struct header *h)
 		if (ret > 0 && name.str[ret - 1] == '\n')
 			name.str[--ret] = '\0';
 		name.len = ret;
+		dev = 0;
 	}
 
 	if (fstatat(AT_FDCWD, name.str, &st, flags) != 0)
 		fatal("stat %s:", name.str);
+	if (Xflag && dev && st.st_dev != dev)
+		goto next;
 	h->name = name.str;
 	h->namelen = name.len;
 	h->slash = NULL;
@@ -1007,7 +1015,7 @@ readfile(FILE *f, struct header *h)
 				break;
 			if (strcmp(d->d_name, ".") == 0 || strcmp(d->d_name, "..") == 0)
 				continue;
-			filepush(&files, d->d_name, name.len);
+			filepush(&files, d->d_name, name.len, st.st_dev);
 		}
 		if (errno != 0)
 			fatal("readdir %s:", name.str);
@@ -1441,7 +1449,7 @@ main(int argc, char *argv[])
 	if (mode & WRITE) {
 		readhdr = readfile;
 		for (i = 0; i < argc; ++i)
-			filepush(&files, argv[i], 0);
+			filepush(&files, argv[i], 0, 0);
 		if (argc == 0)
 			files.input = stdin;
 	}
