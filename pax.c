@@ -159,27 +159,30 @@ strbufalloc(struct strbuf *b, size_t n, size_t a)
 {
 	char *s;
 
-	if (n < b->cap)
-		return b->str;
-	if (n > SIZE_MAX - a)
-		fatal("path is too long");
-	free(b->str);
-	b->cap = ROUNDUP(n, a);
-	s = malloc(b->cap);
-	if (!s)
-		fatal(NULL);
-	return b->str = s;
+	if (n > b->cap - b->len) {
+		if (n > SIZE_MAX - a || n + a > SIZE_MAX - b->len)
+			fatal("path is too long");
+		b->cap = ROUNDUP(n, a);
+		s = malloc(b->cap);
+		if (b->len)
+			memcpy(s, b->str, b->len);
+		free(b->str);
+		if (!s)
+			fatal(NULL);
+		b->str = s;
+	}
+	return b->str + b->len;
 }
 
 static void
-strbufcpy(struct strbuf *b, const char *s, size_t n, size_t a)
+strbufcat(struct strbuf *b, const char *s, size_t n, size_t a)
 {
 	char *d;
 
 	d = strbufalloc(b, n + 1, a);
-	memcpy(d, s, n + 1);
+	memcpy(d, s, n);
 	d[n] = 0;
-	b->len = n;
+	b->len += n;
 }
 
 static void
@@ -289,7 +292,7 @@ repl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
 			}
 			n += i <= 9 ? match[i].rm_eo - match[i].rm_so : 1;
 		}
-		d = strbufalloc(b, b->len + n + 1, 1024) + b->len;
+		d = strbufalloc(b, n + 1, 1024);
 		b->len += n;
 		memcpy(d, old, match[0].rm_so);
 		d += match[0].rm_so;
@@ -547,16 +550,19 @@ extkeyval(struct extheader *h, const char *key, const char *val, size_t vallen)
 			fatal("invalid extnded header: bad gid");
 		h->fields |= GID;
 	} else if (strcmp(key, "gname") == 0) {
-		strbufcpy(&h->gname, val, vallen, 256);
+		h->gname.len = 0;
+		strbufcat(&h->gname, val, vallen, 256);
 		h->fields |= GNAME;
 	} else if (strcmp(key, "hdrcharset") == 0) {
 	} else if (strcmp(key, "linkpath") == 0) {
-		strbufcpy(&h->linkpath, val, vallen, 1024);
+		h->linkpath.len = 0;
+		strbufcat(&h->linkpath, val, vallen, 1024);
 		h->fields |= LINKPATH;
 	} else if (strcmp(key, "mtime") == 0) {
 		parsetime(&h->mtime, "mtime", val, vallen);
 	} else if (strcmp(key, "path") == 0) {
-		strbufcpy(&h->path, val, vallen, 1024);
+		h->path.len = 0;
+		strbufcat(&h->path, val, vallen, 1024);
 		h->fields |= PATH;
 	} else if (strncmp(key, "realtime.", 9) == 0) {
 	} else if (strncmp(key, "security.", 9) == 0) {
@@ -571,7 +577,8 @@ extkeyval(struct extheader *h, const char *key, const char *val, size_t vallen)
 			fatal("invalid extnded header: bad uid");
 		h->fields |= UID;
 	} else if (strcmp(key, "uname") == 0) {
-		strbufcpy(&h->uname, val, vallen, 256);
+		h->uname.len = 0;
+		strbufcat(&h->uname, val, vallen, 256);
 		h->fields |= UNAME;
 	} else {
 		fprintf(stderr, "ignoring unknown keyword '%s'\n", key);
@@ -625,6 +632,9 @@ readgnuhdr(FILE *f, struct strbuf *b, off_t len)
 {
 	size_t padlen;
 
+	if (len > SIZE_MAX - 1)
+		fatal("GNU header is too large");
+	b->len = 0;
 	strbufalloc(b, len + 1, 1024);
 	padlen = ROUNDUP(len, 512);
 	if (fread(b->str, 1, padlen, f) != padlen)
