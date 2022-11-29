@@ -208,7 +208,7 @@ copy(FILE *r, off_t nr, FILE *w, off_t nw)
 }
 
 static void
-skip(FILE *f, size_t n)
+skip(FILE *f, off_t n)
 {
 	char b[8192];
 
