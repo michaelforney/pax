@@ -834,25 +834,16 @@ list(struct header *h)
 }
 
 static void
-copyblock(char *buf, FILE *r, size_t nr, int w, size_t nw)
+copyblock(char *buf, FILE *r, size_t nr, FILE *w, size_t nw)
 {
-	ssize_t ret;
-
 	assert(nw <= nr);
 	if (fread(buf, 1, nr, r) != nr) {
 		if (ferror(r))
 			fatal("read:");
 		fatal("archive truncated");
 	}
-	while (nw > 0) {
-		ret = write(w, buf, nw);
-		if (ret < 0)
-			fatal("write:");
-		if (ret == 0)
-			fatal("write returned 0");
-		buf += ret;
-		nw -= ret;
-	}
+	if (fwrite(buf, 1, nw, w) != nw)
+		fatal("write:");
 }
 
 static void
@@ -875,6 +866,7 @@ mkdirp(char *name, size_t len)
 static void
 extract(struct header *h)
 {
+	FILE *f;
 	int fd, retry;
 	char buf[8192];
 	off_t size;
@@ -896,10 +888,13 @@ extract(struct header *h)
 				goto retry;
 			fatal("open %s:", h->name);
 		}
+		f = fdopen(fd, "w");
+		if (!f)
+			fatal("open %s:", h->name);
 		for (size = h->size; size > sizeof(buf); size -= sizeof(buf))
-			copyblock(buf, stdin, sizeof(buf), fd, sizeof(buf));
-		copyblock(buf, stdin, ROUNDUP(size, 512), fd, size);
-		close(fd);
+			copyblock(buf, stdin, sizeof(buf), f, sizeof(buf));
+		copyblock(buf, stdin, ROUNDUP(size, 512), f, size);
+		fclose(f);
 		return;
 	case LNKTYPE:
 		if (linkat(dest, h->link, dest, h->name, 0) != 0) {
