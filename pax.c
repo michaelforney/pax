@@ -23,8 +23,8 @@
 #endif
 #include "arg.h"
 
-#define LEN(a) (sizeof(a) / sizeof((a)[0]))
-#define ROUNDUP(x, a) (((x) + (a) - 1) & ~((a) - 1))
+#define LEN(a) (sizeof (a) / sizeof *(a))
+#define ROUNDUP(x, a) (((x) + ((a) - 1)) & ~((a) - 1))
 
 enum mode {
 	LIST,
@@ -183,15 +183,15 @@ strbufcpy(struct strbuf *b, const char *s, size_t n, size_t a)
 }
 
 static void
-copyblock(char *buf, FILE *r, size_t nr, FILE *w, size_t nw)
+copyblock(char *b, FILE *r, size_t nr, FILE *w, size_t nw)
 {
 	assert(nw <= nr);
-	if (fread(buf, 1, nr, r) != nr) {
+	if (fread(b, 1, nr, r) != nr) {
 		if (ferror(r))
 			fatal("read:");
 		fatal("archive truncated");
 	}
-	if (fwrite(buf, 1, nw, w) != nw)
+	if (fwrite(b, 1, nw, w) != nw)
 		fatal("write:");
 }
 
@@ -208,13 +208,13 @@ copy(FILE *r, off_t nr, FILE *w, off_t nw)
 }
 
 static void
-skip(FILE *f, size_t len)
+skip(FILE *f, size_t n)
 {
-	char buf[8192];
+	char b[8192];
 
-	for (; len > sizeof(buf); len -= sizeof(buf))
-		copyblock(buf, f, sizeof(buf), NULL, 0);
-	copyblock(buf, f, len, NULL, 0);
+	for (; n > sizeof b; n -= sizeof b)
+		copyblock(b, f, sizeof b, NULL, 0);
+	copyblock(b, f, n, NULL, 0);
 }
 
 static unsigned long long
@@ -338,7 +338,7 @@ match(struct header *h)
 			patsused[i] = 1;
 			if (!dflag && h->type == DIRTYPE) {
 				if ((dirslen & (dirslen - 1)) == 0) {
-					dirs = reallocarray(dirs, dirslen ? dirslen * 2 : 32, sizeof(dirs[0]));
+					dirs = reallocarray(dirs, dirslen ? dirslen * 2 : 32, sizeof *dirs);
 					if (!dirs)
 						fatal(NULL);
 				}
@@ -370,7 +370,7 @@ readustar(FILE *f, struct header *h)
 	unsigned long chksum;
 	size_t i;
 
-	if (fread(buf, 1, sizeof(buf), f) != sizeof(buf)) {
+	if (fread(buf, 1, sizeof buf, f) != sizeof buf) {
 		if (ferror(f))
 			fatal("read:");
 		fatal("archive truncated");
@@ -757,7 +757,7 @@ parsereplstr(char *str)
 		usage();
 	*str = 0;
 
-	r = malloc(sizeof(*r));
+	r = malloc(sizeof *r);
 	if (!r)
 		fatal(NULL);
 	r->next = NULL;
@@ -778,7 +778,7 @@ done:
 	if (err != 0) {
 		char errbuf[256];
 
-		regerror(err, &r->old, errbuf, sizeof(errbuf));
+		regerror(err, &r->old, errbuf, sizeof errbuf);
 		fatal("invalid regular expression: %s", errbuf);
 	}
 	r->new = new;
@@ -802,7 +802,7 @@ list(struct header *h)
 		printf("%s\n", h->name);
 		return;
 	}
-	memset(mode, '-', sizeof(mode) - 1);
+	memset(mode, '-', sizeof mode - 1);
 	mode[10] = '\0';
 	switch (h->type) {
 	case SYMTYPE: mode[0] = 'l'; break;
@@ -825,23 +825,23 @@ list(struct header *h)
 	if (h->mode & S_ISVTX) mode[9] = mode[9] == 'x' ? 't' : 'T';
 	uname = h->uname;
 	if (!uname[0]) {
-		snprintf(unamebuf, sizeof(unamebuf), "%ju", (uintmax_t)h->uid);
+		snprintf(unamebuf, sizeof unamebuf, "%ju", (uintmax_t)h->uid);
 		uname = unamebuf;
 	}
 	gname = h->gname;
 	if (!gname[0]) {
-		snprintf(gnamebuf, sizeof(gnamebuf), "%ju", (uintmax_t)h->gid);
+		snprintf(gnamebuf, sizeof gnamebuf, "%ju", (uintmax_t)h->gid);
 		gname = gnamebuf;
 	}
 	timefmt = h->mtime.tv_sec + 157800000 < curtime ? "%b %e  %Y" : "%b %e %H:%M";
 	tm = localtime(&h->mtime.tv_sec);
 	if (!tm)
 		fatal("localtime:");
-	strftime(time, sizeof(time), timefmt, tm);
+	strftime(time, sizeof time, timefmt, tm);
 	if (h->type == CHRTYPE || h->type == BLKTYPE)
-		snprintf(info, sizeof(info), "%u, %u", major(h->dev), minor(h->dev));
+		snprintf(info, sizeof info, "%u, %u", major(h->dev), minor(h->dev));
 	else
-		snprintf(info, sizeof(info), "%ju", (uintmax_t)h->size);
+		snprintf(info, sizeof info, "%ju", (uintmax_t)h->size);
 	printf("%s %2d %-8s %-8s %9s %s %s", mode, 1, uname, gname, info, time, h->name);
 	switch (h->type) {
 	case LNKTYPE: printf(" == %s", h->link); break;
