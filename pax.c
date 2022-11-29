@@ -154,6 +154,47 @@ reallocarray(void *p, size_t n, size_t m)
 	return realloc(p, n * m);
 }
 
+static char *
+strbufalloc(struct strbuf *b, size_t n, size_t a)
+{
+	char *s;
+
+	if (n < b->cap)
+		return b->str;
+	if (n > SIZE_MAX - a)
+		fatal("path is too long");
+	free(b->str);
+	b->cap = ROUNDUP(n, a);
+	s = malloc(b->cap);
+	if (!s)
+		fatal(NULL);
+	return b->str = s;
+}
+
+static void
+strbufcpy(struct strbuf *b, const char *s, size_t n, size_t a)
+{
+	char *d;
+
+	d = strbufalloc(b, n + 1, a);
+	memcpy(d, s, n + 1);
+	d[n] = 0;
+	b->len = n;
+}
+
+static void
+copyblock(char *buf, FILE *r, size_t nr, FILE *w, size_t nw)
+{
+	assert(nw <= nr);
+	if (fread(buf, 1, nr, r) != nr) {
+		if (ferror(r))
+			fatal("read:");
+		fatal("archive truncated");
+	}
+	if (fwrite(buf, 1, nw, w) != nw)
+		fatal("write:");
+}
+
 static void
 skip(FILE *f, size_t len)
 {
@@ -214,34 +255,6 @@ decnum(const char *str, size_t len, char **end)
 	if (end)
 		*end = (char *)str;
 	return n;
-}
-
-static char *
-strbufalloc(struct strbuf *b, size_t n, size_t a)
-{
-	char *s;
-
-	if (n < b->cap)
-		return b->str;
-	if (n > SIZE_MAX - a)
-		fatal("path is too long");
-	free(b->str);
-	b->cap = ROUNDUP(n, a);
-	s = malloc(b->cap);
-	if (!s)
-		fatal(NULL);
-	return b->str = s;
-}
-
-static void
-strbufcpy(struct strbuf *b, const char *s, size_t n, size_t a)
-{
-	char *d;
-
-	d = strbufalloc(b, n + 1, a);
-	memcpy(d, s, n + 1);
-	d[n] = 0;
-	b->len = n;
 }
 
 static int
@@ -831,19 +844,6 @@ list(struct header *h)
 	case SYMTYPE: printf(" -> %s", h->link); break;
 	}
 	putchar('\n');
-}
-
-static void
-copyblock(char *buf, FILE *r, size_t nr, FILE *w, size_t nw)
-{
-	assert(nw <= nr);
-	if (fread(buf, 1, nr, r) != nr) {
-		if (ferror(r))
-			fatal("read:");
-		fatal("archive truncated");
-	}
-	if (fwrite(buf, 1, nw, w) != nw)
-		fatal("write:");
 }
 
 static void
