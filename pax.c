@@ -195,6 +195,18 @@ copyblock(char *buf, FILE *r, size_t nr, FILE *w, size_t nw)
 		fatal("write:");
 }
 
+/* nr and nw must differ by at most 8192 */
+static void
+copy(FILE *r, off_t nr, FILE *w, off_t nw)
+{
+	char b[8192];
+
+	assert(nr - nw <= sizeof b || nw - nr <= sizeof b);
+	for (; nr > sizeof b && nw > sizeof b; nr -= sizeof b, nw -= sizeof b)
+		copyblock(b, r, sizeof b, w, sizeof b);
+	copyblock(b, r, nr, w, nw);
+}
+
 static void
 skip(FILE *f, size_t len)
 {
@@ -860,8 +872,6 @@ extract(struct header *h)
 {
 	FILE *f;
 	int fd, retry;
-	char buf[8192];
-	off_t size;
 	mode_t mode;
 
 	if (vflag)
@@ -883,9 +893,7 @@ extract(struct header *h)
 		f = fdopen(fd, "w");
 		if (!f)
 			fatal("open %s:", h->name);
-		for (size = h->size; size > sizeof(buf); size -= sizeof(buf))
-			copyblock(buf, stdin, sizeof(buf), f, sizeof(buf));
-		copyblock(buf, stdin, ROUNDUP(size, 512), f, size);
+		copy(stdin, ROUNDUP(h->size, 512), f, h->size);
 		fclose(f);
 		return;
 	case LNKTYPE:
