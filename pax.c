@@ -1056,8 +1056,8 @@ main(int argc, char *argv[])
 	case COPY:
 		break;
 	}
-	for (i = 0; i < argc; ++i) {
+	for (i = 0; i < patslen; ++i) {
 		if (!patsused[i])
-			fatal("pattern not matched: %s", argv[i]);
+			fatal("pattern not matched: %s", pats[i]);
 	}
 }
