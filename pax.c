@@ -295,6 +295,56 @@ repl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
 }
 
 static int
+match(struct header *h)
+{
+	static struct {
+		char *name;
+		size_t namelen;
+	} *dirs, *d;
+	static size_t dirslen;
+	size_t i;
+
+	if (patslen == 0)
+		return 1;
+	if (!dflag) {
+		for (i = 0; i < dirslen; ++i) {
+			if (h->namelen >= dirs[i].namelen && memcmp(h->name, dirs[i].name, dirs[i].namelen) == 0)
+				return !cflag;
+		}
+	}
+	for (i = 0; i < patslen; ++i) {
+		if (nflag && patsused[i])
+			continue;
+		switch (fnmatch(pats[i], h->name, FNM_PATHNAME | FNM_PERIOD)) {
+		case 0:
+			patsused[i] = 1;
+			if (!dflag && h->type == DIRTYPE) {
+				if ((dirslen & (dirslen - 1)) == 0) {
+					dirs = reallocarray(dirs, dirslen ? dirslen * 2 : 32, sizeof(dirs[0]));
+					if (!dirs)
+						fatal(NULL);
+				}
+				d = &dirs[dirslen++];
+				d->namelen = h->namelen;
+				d->name = malloc(d->namelen + 1);
+				if (!d->name)
+					fatal(NULL);
+				memcpy(d->name, h->name, h->namelen);
+				/* add trailing slash if not already present */
+				if (d->name[d->namelen - 1] != '/')
+					d->name[d->namelen++] = '/';
+			}
+			return !cflag;
+		case FNM_NOMATCH:
+			break;
+		default:
+			fatal("fnmatch error");
+		}
+	}
+	return cflag;
+}
+
+static int
 readustar(FILE *f, struct header *h)
 {
 	static char buf[512];
@@ -565,7 +615,13 @@ readpax(FILE *f, struct header *h)
 		case 'x': readexthdr(f, &exthdr, h->size);     break;
 		case 'L': readgnuhdr(f, &exthdr.path, h->size),     exthdr.fields |= PATH;     break;
 		case 'K': readgnuhdr(f, &exthdr.linkpath, h->size), exthdr.fields |= LINKPATH; break;
-		default: return 1;
+		default:
+			if (!match(h)) {
+				skip(f, ROUNDUP(h->size, 512));
+				exthdr.fields = 0;
+				break;
+			}
+			return 1;
 		}
 	}
 	return 0;
@@ -710,56 +766,6 @@ done:
 	end = &r->next;
 }
 
-static int
-match(struct header *h)
-{
-	static struct {
-		char *name;
-		size_t namelen;
-	} *dirs, *d;
-	static size_t dirslen;
-	size_t i;
-
-	if (patslen == 0)
-		return 1;
-	if (!dflag) {
-		for (i = 0; i < dirslen; ++i) {
-			if (h->namelen >= dirs[i].namelen && memcmp(h->name, dirs[i].name, dirs[i].namelen) == 0)
-				return !cflag;
-		}
-	}
-	for (i = 0; i < patslen; ++i) {
-		if (nflag && patsused[i])
-			continue;
-		switch (fnmatch(pats[i], h->name, FNM_PATHNAME | FNM_PERIOD)) {
-		case 0:
-			patsused[i] = 1;
-			if (!dflag && h->type == DIRTYPE) {
-				if ((dirslen & (dirslen - 1)) == 0) {
-					dirs = reallocarray(dirs, dirslen ? dirslen * 2 : 32, sizeof(dirs[0]));
-					if (!dirs)
-						fatal(NULL);
-				}
-				d = &dirs[dirslen++];
-				d->namelen = h->namelen;
-				d->name = malloc(d->namelen + 1);
-				if (!d->name)
-					fatal(NULL);
-				memcpy(d->name, h->name, h->namelen);
-				/* add trailing slash if not already present */
-				if (d->name[d->namelen - 1] != '/')
-					d->name[d->namelen++] = '/';
-			}
-			return !cflag;
-		case FNM_NOMATCH:
-			break;
-		default:
-			fatal("fnmatch error");
-		}
-	}
-	return cflag;
-}
-
 static void
 list(struct header *h)
 {
@@ -770,8 +776,6 @@ list(struct header *h)
 	struct tm *tm;
 
 	skip(stdin, ROUNDUP(h->size, 512));
-	if (!match(h))
-		return;
 	if (opt.listopt)
 		fatal("listopt is not supported");
 	if (!vflag) {
@@ -873,8 +877,6 @@ extract(struct header *h)
 	off_t size;
 	mode_t mode;
 
-	if (!match(h))
-		goto skip;
 	if (vflag)
 		fprintf(stderr, "%s\n", h->name);
 	retry = 1;
@@ -934,7 +936,6 @@ extract(struct header *h)
 		}
 		break;
 	}
-skip:
 	skip(stdin, ROUNDUP(h->size, 512));
 }
 
