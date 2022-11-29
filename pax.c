@@ -199,18 +199,10 @@ static void
 skip(FILE *f, size_t len)
 {
 	char buf[8192];
-	size_t n = sizeof(buf);
 
-	while (len > 0) {
-		if (len < n)
-			n = len;
-		if (fread(buf, 1, n, f) != n) {
-			if (ferror(f))
-				fatal("read:");
-			fatal("archive truncated");
-		}
-		len -= n;
-	}
+	for (; len > sizeof(buf); len -= sizeof(buf))
+		copyblock(buf, f, sizeof(buf), NULL, 0);
+	copyblock(buf, f, len, NULL, 0);
 }
 
 static unsigned long long
