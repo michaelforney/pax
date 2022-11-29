@@ -367,6 +367,8 @@ readustar(FILE *f, struct header *h)
 		chksum += ' ' - buf[i];
 	if (chksum != octnum(buf + 148, 8))
 		fatal("bad checksum");
+	if (memcmp(buf + 257, "ustar\0" "00", 8) != 0)
+		fatal("bad magic");
 	if (exthdr.fields & PATH) {
 		h->name = exthdr.path.str;
 		h->namelen = exthdr.path.len;
