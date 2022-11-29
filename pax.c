@@ -586,27 +586,23 @@ extkeyval(struct extheader *h, const char *key, const char *val, size_t vallen)
 }
 
 static void
-readexthdr(FILE *f, struct extheader *h, size_t len)
+readexthdr(FILE *f, struct extheader *h, off_t len)
 {
-	static char *buf;
-	static size_t buflen;
+	static struct strbuf buf;
 	size_t reclen, vallen, padlen;
 	char *rec, *end, *key, *val;
 
-	if (buflen < len) {
-		buflen = ROUNDUP(len, 8192);
-		free(buf);
-		buf = malloc(buflen);
-		if (!buf)
-			fatal(NULL);
-	}
+	if (len > SIZE_MAX)
+		fatal("extended header is too large");
+	buf.len = 0;
+	sbufalloc(&buf, len, 8192);
 	padlen = ROUNDUP(len, 512);
-	if (fread(buf, 1, padlen, stdin) != padlen) {
+	if (fread(buf.str, 1, padlen, stdin) != padlen) {
 		if (ferror(f))
 			fatal("read:");
 		fatal("archive truncated");
 	}
-	rec = buf;
+	rec = buf.str;
 	while (len > 0) {
 		end = memchr(rec, '\n', len);
 		if (!end)
