@@ -1246,7 +1246,7 @@ static void
 writefile(FILE *unused, struct header *h)
 {
 	FILE *f;
-	int fd, retry;
+	int fd, retry, flags;
 	mode_t mode;
 
 	if (!h)
@@ -1261,7 +1261,10 @@ writefile(FILE *unused, struct header *h)
 	}
 	switch (h->type) {
 	case REGTYPE:
-		fd = openat(dest, h->name, O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, h->mode);
+		flags = O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC;
+		if (kflag)
+			flags |= O_EXCL;
+		fd = openat(dest, h->name, flags, h->mode);
 		if (fd < 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
