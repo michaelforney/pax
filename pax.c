@@ -944,7 +944,7 @@ readfile(FILE *f, struct header *h)
 	h->name = name.str;
 	h->namelen = name.len;
 	h->slash = NULL;
-	h->mode = st.st_mode;
+	h->mode = st.st_mode & ~S_IFMT;
 	h->uid = st.st_uid;
 	h->gid = st.st_gid;
 	h->size = 0;
