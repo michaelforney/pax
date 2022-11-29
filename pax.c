@@ -155,7 +155,7 @@ reallocarray(void *p, size_t n, size_t m)
 }
 
 static char *
-strbufalloc(struct strbuf *b, size_t n, size_t a)
+sbufalloc(struct strbuf *b, size_t n, size_t a)
 {
 	char *s;
 
@@ -175,11 +175,11 @@ strbufalloc(struct strbuf *b, size_t n, size_t a)
 }
 
 static void
-strbufcat(struct strbuf *b, const char *s, size_t n, size_t a)
+sbufcat(struct strbuf *b, const char *s, size_t n, size_t a)
 {
 	char *d;
 
-	d = strbufalloc(b, n + 1, a);
+	d = sbufalloc(b, n + 1, a);
 	memcpy(d, s, n);
 	d[n] = 0;
 	b->len += n;
@@ -292,7 +292,7 @@ repl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
 			}
 			n += i <= 9 ? match[i].rm_eo - match[i].rm_so : 1;
 		}
-		d = strbufalloc(b, n + 1, 1024);
+		d = sbufalloc(b, n + 1, 1024);
 		b->len += n;
 		memcpy(d, old, match[0].rm_so);
 		d += match[0].rm_so;
@@ -551,18 +551,18 @@ extkeyval(struct extheader *h, const char *key, const char *val, size_t vallen)
 		h->fields |= GID;
 	} else if (strcmp(key, "gname") == 0) {
 		h->gname.len = 0;
-		strbufcat(&h->gname, val, vallen, 256);
+		sbufcat(&h->gname, val, vallen, 256);
 		h->fields |= GNAME;
 	} else if (strcmp(key, "hdrcharset") == 0) {
 	} else if (strcmp(key, "linkpath") == 0) {
 		h->linkpath.len = 0;
-		strbufcat(&h->linkpath, val, vallen, 1024);
+		sbufcat(&h->linkpath, val, vallen, 1024);
 		h->fields |= LINKPATH;
 	} else if (strcmp(key, "mtime") == 0) {
 		parsetime(&h->mtime, "mtime", val, vallen);
 	} else if (strcmp(key, "path") == 0) {
 		h->path.len = 0;
-		strbufcat(&h->path, val, vallen, 1024);
+		sbufcat(&h->path, val, vallen, 1024);
 		h->fields |= PATH;
 	} else if (strncmp(key, "realtime.", 9) == 0) {
 	} else if (strncmp(key, "security.", 9) == 0) {
@@ -578,7 +578,7 @@ extkeyval(struct extheader *h, const char *key, const char *val, size_t vallen)
 		h->fields |= UID;
 	} else if (strcmp(key, "uname") == 0) {
 		h->uname.len = 0;
-		strbufcat(&h->uname, val, vallen, 256);
+		sbufcat(&h->uname, val, vallen, 256);
 		h->fields |= UNAME;
 	} else {
 		fprintf(stderr, "ignoring unknown keyword '%s'\n", key);
@@ -635,7 +635,7 @@ readgnuhdr(FILE *f, struct strbuf *b, off_t len)
 	if (len > SIZE_MAX - 1)
 		fatal("GNU header is too large");
 	b->len = 0;
-	strbufalloc(b, len + 1, 1024);
+	sbufalloc(b, len + 1, 1024);
 	padlen = ROUNDUP(len, 512);
 	if (fread(b->str, 1, padlen, f) != padlen)
 		fatal("read:");
