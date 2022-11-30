@@ -475,6 +475,7 @@ readustar(struct bufio *f, struct header *h)
 	size_t namelen, prefixlen, linklen;
 	unsigned long chksum;
 	size_t i;
+	bool gnu;
 
 	assert(bioin.off <= end);
 	if (bioskip(f, end - bioin.off) != 0 || bioread(f, buf, sizeof buf) != sizeof buf) {
@@ -491,8 +492,12 @@ readustar(struct bufio *f, struct header *h)
 		chksum += ' ' - buf[i];
 	if (chksum != octnum(buf + 148, 8))
 		fatal("bad checksum");
-	if (memcmp(buf + 257, "ustar\0" "00", 8) != 0)
-		fatal("bad magic");
+	gnu = false;
+	if (memcmp(buf + 257, "ustar\0" "00", 8) != 0) {
+		if (memcmp(buf + 257, "ustar  ", 8) != 0)
+			fatal("bad magic");
+		gnu = true;
+	}
 	if (exthdr.fields & PATH) {
 		h->name = exthdr.path.str;
 		h->namelen = exthdr.path.len;
@@ -501,7 +506,7 @@ readustar(struct bufio *f, struct header *h)
 		h->namelen = globexthdr.path.len;
 	} else {
 		namelen = strnlen(buf, 100);
-		prefixlen = strnlen(buf + 345, 155);
+		prefixlen = gnu ? 0 : strnlen(buf + 345, 155);
 		if (namelen == 100 || prefixlen > 0) {
 			static char namebuf[257];
 
@@ -536,10 +541,10 @@ readustar(struct bufio *f, struct header *h)
 	           (struct timespec){.tv_sec = octnum(buf + 136, 12)};
 	h->atime = exthdr.fields & ATIME ? exthdr.atime :
 	           globexthdr.fields & ATIME ? globexthdr.atime :
-	           (struct timespec){.tv_sec = -1};
+	           (struct timespec){.tv_sec = gnu ? octnum(buf + 345, 12) : -1};
 	h->ctime = exthdr.fields & CTIME ? exthdr.ctime :
 	           globexthdr.fields & CTIME ? globexthdr.ctime :
-	           (struct timespec){.tv_sec = -1};
+	           (struct timespec){.tv_sec = gnu ? octnum(buf + 357, 12) : -1};
 	h->type = buf[156];
 	if (h->type == AREGTYPE)
 		h->type = REGTYPE;
