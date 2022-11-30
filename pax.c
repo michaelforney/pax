@@ -39,6 +39,8 @@ enum format {
 	CPIO,
 	PAX,
 	USTAR,
+	GNUTAR,
+	V7,
 };
 
 enum field {
@@ -475,7 +477,7 @@ readustar(struct bufio *f, struct header *h)
 	size_t namelen, prefixlen, linklen;
 	unsigned long chksum;
 	size_t i;
-	bool gnu;
+	enum format format;
 
 	assert(bioin.off <= end);
 	if (bioskip(f, end - bioin.off) != 0 || bioread(f, buf, sizeof buf) != sizeof buf) {
@@ -492,12 +494,12 @@ readustar(struct bufio *f, struct header *h)
 		chksum += ' ' - buf[i];
 	if (chksum != octnum(buf + 148, 8))
 		fatal("bad checksum");
-	gnu = false;
-	if (memcmp(buf + 257, "ustar\0" "00", 8) != 0) {
-		if (memcmp(buf + 257, "ustar  ", 8) != 0)
-			fatal("bad magic");
-		gnu = true;
-	}
+	if (memcmp(buf + 257, "ustar\0" "00", 8) == 0)
+		format = USTAR;
+	else if (memcmp(buf + 257, "ustar  ", 8) == 0)
+		format = GNUTAR;
+	else
+		format = V7;
 	if (exthdr.fields & PATH) {
 		h->name = exthdr.path.str;
 		h->namelen = exthdr.path.len;
@@ -506,7 +508,7 @@ readustar(struct bufio *f, struct header *h)
 		h->namelen = globexthdr.path.len;
 	} else {
 		namelen = strnlen(buf, 100);
-		prefixlen = gnu ? 0 : strnlen(buf + 345, 155);
+		prefixlen = format == USTAR ? strnlen(buf + 345, 155) : 0;
 		if (namelen == 100 || prefixlen > 0) {
 			static char namebuf[257];
 
@@ -541,10 +543,10 @@ readustar(struct bufio *f, struct header *h)
 	           (struct timespec){.tv_sec = octnum(buf + 136, 12)};
 	h->atime = exthdr.fields & ATIME ? exthdr.atime :
 	           globexthdr.fields & ATIME ? globexthdr.atime :
-	           (struct timespec){.tv_sec = gnu ? octnum(buf + 345, 12) : -1};
+	           (struct timespec){.tv_sec = format == GNUTAR ? octnum(buf + 345, 12) : -1};
 	h->ctime = exthdr.fields & CTIME ? exthdr.ctime :
 	           globexthdr.fields & CTIME ? globexthdr.ctime :
-	           (struct timespec){.tv_sec = gnu ? octnum(buf + 357, 12) : -1};
+	           (struct timespec){.tv_sec = format == GNUTAR ? octnum(buf + 357, 12) : -1};
 	h->type = buf[156];
 	if (h->type == AREGTYPE)
 		h->type = REGTYPE;
@@ -568,30 +570,35 @@ readustar(struct bufio *f, struct header *h)
 		}
 		h->linklen = linklen;
 	}
-	if (exthdr.fields & UNAME) {
-		h->uname = exthdr.uname.str;
-	} else if (globexthdr.fields & UNAME) {
-		h->uname = globexthdr.uname.str;
+	if (format == V7) {
+		h->uname = "";
+		h->gname = "";
 	} else {
-		h->uname = buf + 265;
-		if (!memchr(h->uname, '\0', 32))
-			fatal("uname is not NUL-terminated");
-	}
-	if (exthdr.fields & GNAME) {
-		h->gname = exthdr.gname.str;
-	} else if (globexthdr.fields & GNAME) {
-		h->gname = globexthdr.gname.str;
-	} else {
-		h->gname = buf + 297;
-		if (!memchr(h->gname, '\0', 32))
-			fatal("gname is not NUL-terminated");
-	}
-	if (h->type == CHRTYPE || h->type == BLKTYPE) {
-		unsigned major, minor;
+		if (exthdr.fields & UNAME) {
+			h->uname = exthdr.uname.str;
+		} else if (globexthdr.fields & UNAME) {
+			h->uname = globexthdr.uname.str;
+		} else {
+			h->uname = buf + 265;
+			if (!memchr(h->uname, '\0', 32))
+				fatal("uname is not NUL-terminated");
+		}
+		if (exthdr.fields & GNAME) {
+			h->gname = exthdr.gname.str;
+		} else if (globexthdr.fields & GNAME) {
+			h->gname = globexthdr.gname.str;
+		} else {
+			h->gname = buf + 297;
+			if (!memchr(h->gname, '\0', 32))
+				fatal("gname is not NUL-terminated");
+		}
+		if (h->type == CHRTYPE || h->type == BLKTYPE) {
+			unsigned major, minor;
 
-		major = octnum(buf + 329, 8);
-		minor = octnum(buf + 337, 8);
-		h->dev = makedev(major, minor);
+			major = octnum(buf + 329, 8);
+			minor = octnum(buf + 337, 8);
+			h->dev = makedev(major, minor);
+		}
 	}
 
 	for (struct replstr *r = replstr; r; r = r->next) {
