@@ -17,6 +17,7 @@
 #include <regex.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 #include <tar.h>
 #include <unistd.h>
 #ifndef makedev
@@ -57,7 +58,6 @@ enum field {
 struct header {
 	char *name;
 	size_t namelen;
-	char *slash;  /* tar-specific, pre-calculated split point between name and prefix */
 	mode_t mode;
 	uid_t uid;
 	gid_t gid;
@@ -69,8 +69,19 @@ struct header {
 	char *uname;
 	char *gname;
 	dev_t dev;
-	FILE *file;
-	int pad;
+
+	/* tar-specific, pre-calculated split point between name and prefix */
+	char *slash;
+	/* read this data instead of stdin */
+	char *data;
+	size_t datalen;
+};
+
+struct bufio {
+	int fd, err;
+	off_t off;
+	char buf[64 * 1024];
+	char *pos, *end;
 };
 
 struct strbuf {
@@ -139,6 +150,7 @@ static char **pats;
 static size_t patslen;
 static bool *patsused;
 static struct filelist files;
+static struct bufio bioin;
 static int dest = AT_FDCWD;
 
 static void
@@ -204,11 +216,90 @@ sbufcat(struct strbuf *b, const char *s, size_t n, size_t a)
 }
 
 static void
-copyblock(char *b, FILE *r, size_t nr, FILE *w, size_t nw)
+bioinit(struct bufio *f, int fd)
 {
-	if (fread(b, 1, nr, r) != nr) {
-		if (ferror(r))
-			fatal("read:");
+	f->fd = fd;
+	f->pos = f->end = f->buf;
+	f->off = 0;
+}
+
+static size_t
+bioread(struct bufio *f, void *p, size_t n)
+{
+	size_t l;
+	unsigned char *d;
+	struct iovec iov[2];
+	ssize_t r;
+
+	d = p;
+	if (f->pos != f->end) {
+		l = f->end - f->pos;
+		if (n < l)
+			l = n;
+		memcpy(d, f->pos, l);
+		f->pos += l;
+		n -= l;
+		d += l;
+	}
+	iov[1].iov_base = f->buf;
+	iov[1].iov_len = sizeof f->buf;
+	for (; n > 0; n -= r, d += r) {
+		iov[0].iov_base = d;
+		iov[0].iov_len = n;
+		r = readv(f->fd, iov, 2);
+		if (r < 0)
+			f->err = errno;
+		if (r <= 0)
+			break;
+		if (r >= n) {
+			f->pos = f->buf;
+			f->end = f->buf + (r - n);
+			r = n;
+		}
+	}
+	l = d - (unsigned char *)p;
+	f->off += l;
+	return l;
+}
+
+static int
+bioskip(struct bufio *f, off_t n)
+{
+	static bool seekfail;
+	size_t l;
+	ssize_t r;
+
+	if (f->pos != f->end) {
+		l = f->end - f->pos;
+		if (n < l) {
+			f->pos += n;
+			return 0;
+		}
+		n -= l;
+		f->pos = f->end = f->buf;
+	}
+	if (!seekfail) {
+		if (n == 0 || lseek(f->fd, n, SEEK_CUR) >= 0)
+			return 0;
+		seekfail = true;
+	}
+	for (; n > 0; n -= r) {
+		l = sizeof f->buf;
+		if (n < l)
+			l = n;
+		r = read(f->fd, f->buf, l);
+		if (r <= 0)
+			return -1;
+	}
+	return 0;
+}
+
+static void
+copyblock(char *b, struct bufio *r, size_t nr, FILE *w, size_t nw)
+{
+	if (bioread(r, b, nr) != nr) {
+		if (r->err)
+			fatal("read: %s", strerror(errno));
 		fatal("archive truncated");
 	}
 	if (nw > nr)
@@ -219,7 +310,7 @@ copyblock(char *b, FILE *r, size_t nr, FILE *w, size_t nw)
 
 /* nr and nw must differ by at most 8192 */
 static void
-copy(FILE *r, off_t nr, FILE *w, off_t nw)
+copy(struct bufio *r, off_t nr, FILE *w, off_t nw)
 {
 	char b[8192];
 
@@ -227,24 +318,6 @@ copy(FILE *r, off_t nr, FILE *w, off_t nw)
 	for (; nr > sizeof b && nw > sizeof b; nr -= sizeof b, nw -= sizeof b)
 		copyblock(b, r, sizeof b, w, sizeof b);
 	copyblock(b, r, nr, w, nw);
-}
-
-static void
-skip(FILE *f, off_t n)
-{
-	static bool seekfail;
-	char b[8192];
-
-	if (n == 0)
-		return;
-	if (!seekfail) {
-		if (fseeko(f, n, SEEK_CUR) == 0)
-			return;
-		seekfail = true;
-	}
-	for (; n > sizeof b; n -= sizeof b)
-		copyblock(b, f, sizeof b, NULL, 0);
-	copyblock(b, f, n, NULL, 0);
 }
 
 static unsigned long long
@@ -395,16 +468,18 @@ match(struct header *h)
 }
 
 static int
-readustar(FILE *f, struct header *h)
+readustar(struct bufio *f, struct header *h)
 {
 	static char buf[512];
+	static off_t end;
 	size_t namelen, prefixlen, linklen;
 	unsigned long chksum;
 	size_t i;
 
-	if (fread(buf, 1, sizeof buf, f) != sizeof buf) {
-		if (ferror(f))
-			fatal("read:");
+	assert(bioin.off <= end);
+	if (bioskip(f, end - bioin.off) != 0 || bioread(f, buf, sizeof buf) != sizeof buf) {
+		if (f->err)
+			fatal("read: %s", strerror(errno));
 		fatal("archive truncated");
 	}
 	chksum = 0;
@@ -455,6 +530,7 @@ readustar(FILE *f, struct header *h)
 	h->size = exthdr.fields & SIZE ? exthdr.size :
 	          globexthdr.fields & SIZE ? globexthdr.size :
 	          octnum(buf + 124, 12);
+	end = bioin.off + ROUNDUP(h->size, 512);
 	h->mtime = exthdr.fields & MTIME ? exthdr.mtime :
 	           globexthdr.fields & MTIME ? globexthdr.mtime :
 	           (struct timespec){.tv_sec = octnum(buf + 136, 12)};
@@ -523,8 +599,6 @@ readustar(FILE *f, struct header *h)
 			break;
 		}
 	}
-	h->file = f;
-	h->pad = 512;
 
 	return 1;
 }
@@ -606,20 +680,19 @@ extkeyval(struct extheader *h, const char *key, const char *val, size_t vallen)
 }
 
 static void
-readexthdr(FILE *f, struct extheader *h, off_t len)
+readexthdr(struct bufio *f, struct extheader *h, off_t len)
 {
 	static struct strbuf buf;
-	size_t reclen, vallen, padlen;
+	size_t reclen, vallen;
 	char *rec, *end, *key, *val;
 
 	if (len > SIZE_MAX)
 		fatal("extended header is too large");
 	buf.len = 0;
 	sbufalloc(&buf, len, 8192);
-	padlen = ROUNDUP(len, 512);
-	if (fread(buf.str, 1, padlen, stdin) != padlen) {
-		if (ferror(f))
-			fatal("read:");
+	if (bioread(f, buf.str, len) != len) {
+		if (f->err)
+			fatal("read: %s", strerror(errno));
 		fatal("archive truncated");
 	}
 	rec = buf.str;
@@ -644,23 +717,23 @@ readexthdr(FILE *f, struct extheader *h, off_t len)
 }
 
 static void
-readgnuhdr(FILE *f, struct strbuf *b, off_t len)
+readgnuhdr(struct bufio *f, struct strbuf *b, off_t len)
 {
-	size_t padlen;
-
 	if (len > SIZE_MAX - 1)
 		fatal("GNU header is too large");
 	b->len = 0;
 	sbufalloc(b, len + 1, 1024);
-	padlen = ROUNDUP(len, 512);
-	if (fread(b->str, 1, padlen, f) != padlen)
-		fatal("read:");
+	if (bioread(f, b->str, len) != len) {
+		if (f->err)
+			fatal("read: %s", strerror(errno));
+		fatal("archive truncated");
+	}
 	b->str[len] = '\0';
 	b->len = len;
 }
 
 static int
-readpax(FILE *f, struct header *h)
+readpax(struct bufio *f, struct header *h)
 {
 	exthdr.fields = 0;
 	while (readustar(f, h)) {
@@ -671,7 +744,6 @@ readpax(FILE *f, struct header *h)
 		case 'K': readgnuhdr(f, &exthdr.linkpath, h->size), exthdr.fields |= LINKPATH; break;
 		default:
 			if (!match(h)) {
-				skip(f, ROUNDUP(h->size, 512));
 				exthdr.fields = 0;
 				break;
 			}
@@ -774,8 +846,18 @@ writeustar(FILE *f, struct header *h)
 	snprintf(buf + 148, 8, "%.7lo", sum & 07777777);
 	if (fwrite(buf, 512, 1, f) != 1)
 		fatal("write:");
-	if (h->file)
-		copy(h->file, h->size, f, ROUNDUP(h->size, 512));
+	if (h->data) {
+		size_t pad;
+
+		if (fwrite(h->data, 1, h->size, f) != h->size)
+			fatal("write:");
+		pad = ROUNDUP(h->size, 512) - h->size;
+		memset(bioin.buf, 0, pad);
+		if (fwrite(bioin.buf, 1, pad, f) != pad)
+			fatal("write:");
+	} else {
+		copy(&bioin, h->size, f, ROUNDUP(h->size, 512));
+	}
 }
 
 static int
@@ -877,12 +959,9 @@ writepax(FILE *f, struct header *h)
 		exthdr.gname = "";
 		exthdr.size = extlen;
 		exthdr.type = 'x';
-		exthdr.file = fmemopen(extbuf, extlen, "r");
-		if (!exthdr.file)
-			fatal("fmemopen:");
-		exthdr.pad = 1;
+		exthdr.data = extbuf;
+		exthdr.datalen = extlen;
 		writeustar(f, &exthdr);
-		fclose(exthdr.file);
 		fseek(ext, 0, SEEK_SET);
 	}
 	writeustar(f, h);
@@ -907,11 +986,11 @@ filepush(struct filelist *files, const char *name, size_t pathlen, dev_t dev)
 }
 
 static int
-readfile(FILE *f, struct header *h)
+readfile(struct bufio *f, struct header *h)
 {
 	static struct strbuf name, link;
 	struct stat st;
-	int flags;
+	int flags, fd;
 	DIR *dir;
 	struct dirent *d;
 	ssize_t ret;
@@ -965,15 +1044,17 @@ next:
 	h->link = "";
 	h->linklen = 0;
 	h->dev = 0;
-	h->file = NULL;
+	h->data = NULL;
 	switch (st.st_mode & S_IFMT) {
 	case S_IFREG:
 		h->type = REGTYPE;
 		h->size = st.st_size;
-		h->file = fopen(name.str, "r");
-		if (!h->file)
+		if (bioin.fd >= 0)
+			close(bioin.fd);
+		fd = open(name.str, O_RDONLY);
+		if (fd < 0)
 			fatal("open %s:", name.str);
-		h->pad = 1;
+		bioinit(&bioin, fd);
 		break;
 	case S_IFLNK:
 		h->type = SYMTYPE;
@@ -1179,7 +1260,6 @@ listhdr(FILE *f, struct header *h)
 
 	if (!h)
 		return;
-	skip(h->file, ROUNDUP(h->size, 512));
 	if (opt.listopt)
 		fatal("listopt is not supported");
 	if (!vflag) {
@@ -1282,9 +1362,9 @@ writefile(FILE *unused, struct header *h)
 		f = fdopen(fd, "w");
 		if (!f)
 			fatal("open %s:", h->name);
-		copy(h->file, ROUNDUP(h->size, h->pad), f, h->size);
+		copy(&bioin, h->size, f, h->size);
 		fclose(f);
-		return;
+		break;
 	case LNKTYPE:
 		if (linkat(dest, h->link, dest, h->name, 0) != 0) {
 			if (retry && errno == ENOENT)
@@ -1323,7 +1403,6 @@ writefile(FILE *unused, struct header *h)
 		}
 		break;
 	}
-	skip(h->file, ROUNDUP(h->size, 512));
 }
 
 int
@@ -1332,7 +1411,7 @@ main(int argc, char *argv[])
 	const char *name = NULL, *arg, *format = "pax";
 	enum mode mode = LIST;
 	struct header hdr;
-	int (*readhdr)(FILE *, struct header *) = readpax;
+	int (*readhdr)(struct bufio *, struct header *) = readpax;
 	void (*writehdr)(FILE *, struct header *) = listhdr;
 	size_t i;
 
@@ -1420,8 +1499,11 @@ main(int argc, char *argv[])
 		writehdr = writefile;
 		/* fallthrough */
 	case LIST:
-		if (name && strcmp(name, "-") != 0 && !freopen(name, "r", stdin))
-			fatal("open %s:", name);
+		if (name && strcmp(name, "-") != 0) {
+			bioin.fd = open(name, O_RDONLY);
+			if (bioin.fd < 0)
+				fatal("open %s:", name);
+		}
 		pats = argv;
 		patslen = argc;
 		patsused = calloc(1, argc);
@@ -1449,13 +1531,14 @@ main(int argc, char *argv[])
 	}
 	if (mode & WRITE) {
 		readhdr = readfile;
+		bioin.fd = -1;
 		for (i = 0; i < argc; ++i)
 			filepush(&files, argv[i], 0, 0);
 		if (argc == 0)
 			files.input = stdin;
 	}
 
-	while (readhdr(stdin, &hdr))
+	while (readhdr(&bioin, &hdr))
 		writehdr(stdout, &hdr);
 	writehdr(stdout, NULL);
 	for (i = 0; i < patslen; ++i) {
