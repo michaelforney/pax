@@ -579,6 +579,7 @@ extkeyval(struct extheader *h, const char *key, const char *val, size_t vallen)
 		h->fields |= LINKPATH;
 	} else if (strcmp(key, "mtime") == 0) {
 		parsetime(&h->mtime, "mtime", val, vallen);
+		h->fields |= MTIME;
 	} else if (strcmp(key, "path") == 0) {
 		h->path.len = 0;
 		sbufcat(&h->path, val, vallen, 1024);
