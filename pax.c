@@ -534,6 +534,12 @@ readustar(struct bufio *f, struct header *h)
 	h->mtime = exthdr.fields & MTIME ? exthdr.mtime :
 	           globexthdr.fields & MTIME ? globexthdr.mtime :
 	           (struct timespec){.tv_sec = octnum(buf + 136, 12)};
+	h->atime = exthdr.fields & ATIME ? exthdr.atime :
+	           globexthdr.fields & ATIME ? globexthdr.atime :
+	           (struct timespec){.tv_sec = -1};
+	h->ctime = exthdr.fields & CTIME ? exthdr.ctime :
+	           globexthdr.fields & CTIME ? globexthdr.ctime :
+	           (struct timespec){.tv_sec = -1};
 	h->type = buf[156];
 	if (h->type == AREGTYPE)
 		h->type = REGTYPE;
