@@ -195,11 +195,11 @@ sbufalloc(struct strbuf *b, size_t n, size_t a)
 			fatal("path is too long");
 		b->cap = ROUNDUP(n, a);
 		s = malloc(b->cap);
+		if (!s)
+			fatal(NULL);
 		if (b->len)
 			memcpy(s, b->str, b->len);
 		free(b->str);
-		if (!s)
-			fatal(NULL);
 		b->str = s;
 	}
 	return b->str + b->len;
