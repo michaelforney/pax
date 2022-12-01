@@ -76,7 +76,6 @@ struct header {
 	char *slash;
 	/* read this data instead of stdin */
 	char *data;
-	size_t datalen;
 };
 
 struct bufio {
@@ -978,7 +977,6 @@ writepax(FILE *f, struct header *h)
 		exthdr.size = extlen;
 		exthdr.type = 'x';
 		exthdr.data = extbuf;
-		exthdr.datalen = extlen;
 		writeustar(f, &exthdr);
 		fseek(ext, 0, SEEK_SET);
 	}
