@@ -1141,7 +1141,7 @@ parseopts(char *s)
 	char *key, *val;
 	int ext;
 
-	for (;;) {
+	while (s) {
 		s += strspn(s, " \t\n\v\f\r");
 		key = s;
 		if (key[0] == '\0')
