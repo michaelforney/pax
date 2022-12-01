@@ -487,11 +487,11 @@ readustar(struct bufio *f, struct header *h)
 	}
 	chksum = 0;
 	for (i = 0; i < 512; ++i)
-		chksum += buf[i];
+		chksum += ((unsigned char *)buf)[i];
 	if (chksum == 0)
 		return 0;
 	for (i = 148; i < 156; ++i)
-		chksum += ' ' - buf[i];
+		chksum += ' ' - ((unsigned char *)buf)[i];
 	if (chksum != octnum(buf + 148, 8))
 		fatal("bad checksum");
 	if (memcmp(buf + 257, "ustar\0" "00", 8) == 0)
