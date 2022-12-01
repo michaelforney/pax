@@ -205,6 +205,41 @@ sbufalloc(struct strbuf *b, size_t n, size_t a)
 	return b->str + b->len;
 }
 
+static int
+sbuffmtv(struct strbuf *b, size_t a, const char *fmt, va_list ap)
+{
+	va_list aptmp;
+	int n;
+
+	va_copy(aptmp, ap);
+	n = vsnprintf(b->str ? b->str + b->len : NULL, b->cap - b->len, fmt, aptmp);
+	va_end(aptmp);
+	if (n < 0)
+		fatal("vsnprintf:");
+	if (n >= b->cap - b->len) {
+		sbufalloc(b, n + 1, a);
+		n = vsnprintf(b->str + b->len, b->cap - b->len, fmt, ap);
+		if (n < 0)
+			fatal("vsnprintf:");
+		if (n >= b->cap - b->len)
+			fatal("vsnprintf: formatted size changed");
+	}
+	b->len += n;
+	return n;
+}
+
+static int
+sbuffmt(struct strbuf *b, size_t a, const char *fmt, ...)
+{
+	va_list ap;
+	int n;
+
+	va_start(ap, fmt);
+	n = sbuffmtv(b, a, fmt, ap);
+	va_end(ap);
+	return n;
+}
+
 static void
 sbufcat(struct strbuf *b, const char *s, size_t n, size_t a)
 {
@@ -877,45 +912,34 @@ writeustar(FILE *f, struct header *h)
 	}
 }
 
-static int
-writerec(FILE *f, const char *fmt, ...)
+static void
+writerec(struct strbuf *ext, const char *fmt, ...)
 {
 	static struct strbuf buf;
 	va_list ap;
-	int len, i, n, m;
+	int d, n, m, l;
 
-	va_start(ap, fmt);
-	len = vsnprintf(buf.str, buf.cap, fmt, ap);
-	va_end(ap);
-	if (len < 0)
-		fatal("vsnprintf:");
 	buf.len = 0;
-	sbufalloc(&buf, len + 1, 512);
 	va_start(ap, fmt);
-	len = vsnprintf(buf.str, buf.cap, fmt, ap);
+	l = sbuffmtv(&buf, 256, fmt, ap);
 	va_end(ap);
-	if (len < 0)
-		fatal("vsnprintf:");
-	if (len >= buf.cap)
-		fatal("vsnprintf: formatted size changed");
-	i = 0;
+
+	d = 0;
 	m = 1;
-	for (n = len; n > 0; n /= 10) {
+	for (n = l; n > 0; n /= 10) {
 		m *= 10;
-		++i;
+		++d;
 	}
-	n = i + 1 + len + 1;
+	n = d + 1 + l + 1;
 	if (n >= m)
 		++n;
-	return fprintf(f, "%d %.*s\n", n, len, buf.str);
+	sbuffmt(ext, 256, "%d %.*s\n", n, l, buf.str);
 }
 
 static void
 writepax(FILE *f, struct header *h)
 {
-	static FILE *ext;
-	static char *extbuf;
-	static size_t extlen;
+	static struct strbuf ext;
 	struct header exthdr;
 
 	if (!h) {
@@ -924,61 +948,53 @@ writepax(FILE *f, struct header *h)
 	}
 	if (vflag)
 		fprintf(stderr, "%s\n", h->name);
-	if (!ext) {
-		ext = open_memstream(&extbuf, &extlen);
-		if (!ext)
-			fatal("open_memstream:");
-	}
+	ext.len = 0;
 	if (h->namelen > 100) {
 		h->slash = splitname(h->name, h->namelen);
 		if (!h->slash)
-			writerec(ext, "name=%s", h->name);
+			writerec(&ext, "path=%s", h->name);
 	}
 	if (h->uid > 07777777) {
-		writerec(ext, "uid=%ju", (uintmax_t)h->uid);
+		writerec(&ext, "uid=%ju", (uintmax_t)h->uid);
 		h->uid = 0;
 	}
 	if (h->gid > 07777777) {
-		writerec(ext, "gid=%ju", (uintmax_t)h->gid);
+		writerec(&ext, "gid=%ju", (uintmax_t)h->gid);
 		h->gid = 0;
 	}
 	if (h->size > 077777777777) {
-		writerec(ext, "size=%ju", (uintmax_t)h->size);
+		writerec(&ext, "size=%ju", (uintmax_t)h->size);
 		h->size = 0;
 	}
 	if (h->mtime.tv_sec > 077777777777 || h->mtime.tv_nsec != 0) {
 		if (h->mtime.tv_nsec != 0) {
-			writerec(ext, "mtime=%ju.%.9ld",
+			writerec(&ext, "mtime=%ju.%.9ld",
 				(uintmax_t)h->mtime.tv_sec, h->mtime.tv_nsec % 1000000000);
 		} else {
-			writerec(ext, "mtime=%ju", (uintmax_t)h->mtime.tv_sec);
+			writerec(&ext, "mtime=%ju", (uintmax_t)h->mtime.tv_sec);
 		}
 		h->mtime.tv_sec = 0;
 		h->mtime.tv_nsec = 0;
 	}
 	if (strlen(h->uname) > 32) {
-		writerec(ext, "uname=%s", h->uname);
+		writerec(&ext, "uname=%s", h->uname);
 		h->uname = "";
 	}
 	if (strlen(h->gname) > 32) {
-		writerec(ext, "gname=%s", h->gname);
+		writerec(&ext, "gname=%s", h->gname);
 		h->gname = "";
 	}
-	fflush(ext);
-	if (ferror(ext))
-		fatal("failed to write extended header");
-	if (extlen > 0) {
+	if (ext.len > 0) {
 		memset(&exthdr, 0, sizeof exthdr);
 		exthdr.name = "pax_extended_header";
 		exthdr.namelen = 20;
 		exthdr.link = "";
 		exthdr.uname = "";
 		exthdr.gname = "";
-		exthdr.size = extlen;
+		exthdr.size = ext.len;
 		exthdr.type = 'x';
-		exthdr.data = extbuf;
+		exthdr.data = ext.str;
 		writeustar(f, &exthdr);
-		fseek(ext, 0, SEEK_SET);
 	}
 	writeustar(f, h);
 }
