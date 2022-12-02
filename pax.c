@@ -908,6 +908,7 @@ static int
 readfile(struct bufio *f, struct header *h)
 {
 	static struct strbuf name, link;
+	static struct timespec ts[2] = {[1].tv_nsec = UTIME_OMIT};
 	struct stat st;
 	int flags, fd;
 	DIR *dir;
@@ -915,6 +916,11 @@ readfile(struct bufio *f, struct header *h)
 	ssize_t ret;
 	dev_t dev;
 
+	if (bioin.fd >= 0) {
+		if (tflag)
+			futimens(bioin.fd, ts);
+		close(bioin.fd);
+	}
 next:
 	flags = follow == 'L' ? 0 : AT_SYMLINK_NOFOLLOW;
 	if (files.pending) {
@@ -968,12 +974,12 @@ next:
 	case S_IFREG:
 		h->type = REGTYPE;
 		h->size = st.st_size;
-		if (bioin.fd >= 0)
-			close(bioin.fd);
 		fd = open(name.str, O_RDONLY);
 		if (fd < 0)
 			fatal("open %s:", name.str);
 		bioinit(&bioin, fd);
+		if (tflag)
+			ts[0] = st.st_atim;
 		break;
 	case S_IFLNK:
 		h->type = SYMTYPE;
