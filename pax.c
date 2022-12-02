@@ -863,6 +863,7 @@ writepax(FILE *f, struct header *h)
 		memset(&exthdr, 0, sizeof exthdr);
 		exthdr.name = "pax_extended_header";
 		exthdr.namelen = 20;
+		exthdr.mode = 0600;
 		exthdr.link = "";
 		exthdr.uname = "";
 		exthdr.gname = "";
