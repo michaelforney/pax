@@ -1427,19 +1427,23 @@ applyrepl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
 static void
 replace(struct header *h)
 {
-	for (struct replstr *r = replstr; r; r = r->next) {
-		static struct strbuf namebuf, linkbuf;
+	struct replstr *r;
 
-		if (applyrepl(r, &namebuf, h->name, h->namelen)) {
-			h->name = namebuf.str;
-			h->namelen = namebuf.len;
+	for (r = replstr; r; r = r->next) {
+		if (applyrepl(r, &exthdr.path, h->name, h->namelen)) {
+			h->name = exthdr.path.str;
+			h->namelen = exthdr.path.len;
 			break;
 		}
-		if (h->type != LNKTYPE && (h->type != SYMTYPE || !r->symlink))
+	}
+	if (h->type != LNKTYPE && h->type != SYMTYPE)
+		return;
+	for (r = replstr; r; r = r->next) {
+		if (h->type == SYMTYPE && !r->symlink)
 			continue;
-		if (applyrepl(r, &linkbuf, h->link, h->linklen)) {
-			h->link = linkbuf.str;
-			h->linklen = linkbuf.len;
+		if (applyrepl(r, &exthdr.linkpath, h->link, h->linklen)) {
+			h->link = exthdr.linkpath.str;
+			h->linklen = exthdr.linkpath.len;
 			break;
 		}
 	}
