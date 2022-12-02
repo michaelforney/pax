@@ -401,109 +401,6 @@ decnum(const char *str, size_t len, char **end)
 }
 
 static int
-repl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
-{
-	regmatch_t match[10];
-	size_t i, n, l;
-	const char *s;
-	char *d;
-	int flags = 0;
-
-	b->len = 0;
-	while (oldlen > 0 && regexec(&r->old, old, LEN(match), match, flags) == 0) {
-		n = match[0].rm_so + (oldlen - match[0].rm_eo);
-		for (s = r->new; *s; ++s) {
-			i = -1;
-			switch (*s) {
-			case '&':  i = 0; break;
-			case '\\': i = (unsigned char)*++s - '0'; break;
-			}
-			n += i <= 9 ? match[i].rm_eo - match[i].rm_so : 1;
-		}
-		d = sbufalloc(b, n + 1, 1024);
-		b->len += n;
-		memcpy(d, old, match[0].rm_so);
-		d += match[0].rm_so;
-		for (s = r->new; *s; ++s) {
-			i = -1;
-			switch (*s) {
-			case '&':  i = 0; break;
-			case '\\': i = (unsigned char)*++s - '0'; break;
-			}
-			if (i <= 9) {
-				l = match[i].rm_eo - match[i].rm_so;
-				memcpy(d, old + match[i].rm_so, l);
-				d += l;
-			} else {
-				*d++ = *s;
-			}
-		}
-		memcpy(d, old + match[0].rm_eo, oldlen - match[0].rm_eo);
-		old += match[0].rm_eo;
-		oldlen -= match[0].rm_eo;
-		flags |= REG_NOTBOL;
-		if (!r->global)
-			break;
-	}
-	if (!flags)
-		return 0;
-	b->str[b->len] = 0;
-	if (r->print)
-		fprintf(stderr, "%s >> %s\n", old, b->str);
-	return 1;
-}
-
-static int
-match(struct header *h)
-{
-	static struct {
-		char *name;
-		size_t namelen;
-	} *dirs, *d;
-	static size_t dirslen;
-	size_t i;
-
-	if (patslen == 0)
-		return 1;
-	if (!dflag) {
-		for (i = 0; i < dirslen; ++i) {
-			if (h->namelen >= dirs[i].namelen && memcmp(h->name, dirs[i].name, dirs[i].namelen) == 0)
-				return !cflag;
-		}
-	}
-	for (i = 0; i < patslen; ++i) {
-		if (nflag && patsused[i])
-			continue;
-		switch (fnmatch(pats[i], h->name, FNM_PATHNAME | FNM_PERIOD)) {
-		case 0:
-			patsused[i] = 1;
-			if (!dflag && h->type == DIRTYPE) {
-				if ((dirslen & (dirslen - 1)) == 0) {
-					dirs = reallocarray(dirs, dirslen ? dirslen * 2 : 32, sizeof *dirs);
-					if (!dirs)
-						fatal(NULL);
-				}
-				d = &dirs[dirslen++];
-				d->namelen = h->namelen;
-				d->name = malloc(d->namelen + 1);
-				if (!d->name)
-					fatal(NULL);
-				memcpy(d->name, h->name, h->namelen);
-				/* add trailing slash if not already present */
-				if (d->name[d->namelen - 1] != '/')
-					d->name[d->namelen++] = '/';
-			}
-			return !cflag;
-		case FNM_NOMATCH:
-			break;
-		default:
-			fatal("fnmatch error");
-		}
-	}
-	return cflag;
-}
-
-static int
 readustar(struct bufio *f, struct header *h)
 {
 	static char buf[512];
@@ -632,23 +529,6 @@ readustar(struct bufio *f, struct header *h)
 			major = octnum(buf + 329, 8);
 			minor = octnum(buf + 337, 8);
 			h->dev = makedev(major, minor);
-		}
-	}
-
-	for (struct replstr *r = replstr; r; r = r->next) {
-		static struct strbuf namebuf, linkbuf;
-
-		if (repl(r, &namebuf, h->name, h->namelen)) {
-			h->name = namebuf.str;
-			h->namelen = namebuf.len;
-			break;
-		}
-		if (h->type != LNKTYPE && (h->type != SYMTYPE || !r->symlink))
-			continue;
-		if (repl(r, &linkbuf, h->link, h->linklen)) {
-			h->link = linkbuf.str;
-			h->linklen = linkbuf.len;
-			break;
 		}
 	}
 
@@ -794,12 +674,7 @@ readpax(struct bufio *f, struct header *h)
 		case 'x': readexthdr(f, &exthdr, h->size);     break;
 		case 'L': readgnuhdr(f, &exthdr.path, h->size),     exthdr.fields |= PATH;     break;
 		case 'K': readgnuhdr(f, &exthdr.linkpath, h->size), exthdr.fields |= LINKPATH; break;
-		default:
-			if (!match(h)) {
-				exthdr.fields = 0;
-				break;
-			}
-			return 1;
+		default: return 1;
 		}
 	}
 	return 0;
@@ -1437,6 +1312,130 @@ writefile(FILE *unused, struct header *h)
 	}
 }
 
+static int
+match(struct header *h)
+{
+	static struct {
+		char *name;
+		size_t namelen;
+	} *dirs, *d;
+	static size_t dirslen;
+	size_t i;
+
+	if (patslen == 0)
+		return 1;
+	if (!dflag) {
+		for (i = 0; i < dirslen; ++i) {
+			if (h->namelen >= dirs[i].namelen && memcmp(h->name, dirs[i].name, dirs[i].namelen) == 0)
+				return !cflag;
+		}
+	}
+	for (i = 0; i < patslen; ++i) {
+		if (nflag && patsused[i])
+			continue;
+		switch (fnmatch(pats[i], h->name, FNM_PATHNAME | FNM_PERIOD)) {
+		case 0:
+			patsused[i] = 1;
+			if (!dflag && h->type == DIRTYPE) {
+				if ((dirslen & (dirslen - 1)) == 0) {
+					dirs = reallocarray(dirs, dirslen ? dirslen * 2 : 32, sizeof *dirs);
+					if (!dirs)
+						fatal(NULL);
+				}
+				d = &dirs[dirslen++];
+				d->namelen = h->namelen;
+				d->name = malloc(d->namelen + 1);
+				if (!d->name)
+					fatal(NULL);
+				memcpy(d->name, h->name, h->namelen);
+				/* add trailing slash if not already present */
+				if (d->name[d->namelen - 1] != '/')
+					d->name[d->namelen++] = '/';
+			}
+			return !cflag;
+		case FNM_NOMATCH:
+			break;
+		default:
+			fatal("fnmatch error");
+		}
+	}
+	return cflag;
+}
+
+static int
+applyrepl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
+{
+	regmatch_t match[10];
+	size_t i, n, l;
+	const char *s;
+	char *d;
+	int flags = 0;
+
+	b->len = 0;
+	while (oldlen > 0 && regexec(&r->old, old, LEN(match), match, flags) == 0) {
+		n = match[0].rm_so + (oldlen - match[0].rm_eo);
+		for (s = r->new; *s; ++s) {
+			i = -1;
+			switch (*s) {
+			case '&':  i = 0; break;
+			case '\\': i = (unsigned char)*++s - '0'; break;
+			}
+			n += i <= 9 ? match[i].rm_eo - match[i].rm_so : 1;
+		}
+		d = sbufalloc(b, n + 1, 1024);
+		b->len += n;
+		memcpy(d, old, match[0].rm_so);
+		d += match[0].rm_so;
+		for (s = r->new; *s; ++s) {
+			i = -1;
+			switch (*s) {
+			case '&':  i = 0; break;
+			case '\\': i = (unsigned char)*++s - '0'; break;
+			}
+			if (i <= 9) {
+				l = match[i].rm_eo - match[i].rm_so;
+				memcpy(d, old + match[i].rm_so, l);
+				d += l;
+			} else {
+				*d++ = *s;
+			}
+		}
+		memcpy(d, old + match[0].rm_eo, oldlen - match[0].rm_eo);
+		old += match[0].rm_eo;
+		oldlen -= match[0].rm_eo;
+		flags |= REG_NOTBOL;
+		if (!r->global)
+			break;
+	}
+	if (!flags)
+		return 0;
+	b->str[b->len] = 0;
+	if (r->print)
+		fprintf(stderr, "%s >> %s\n", old, b->str);
+	return 1;
+}
+
+static void
+replace(struct header *h)
+{
+	for (struct replstr *r = replstr; r; r = r->next) {
+		static struct strbuf namebuf, linkbuf;
+
+		if (applyrepl(r, &namebuf, h->name, h->namelen)) {
+			h->name = namebuf.str;
+			h->namelen = namebuf.len;
+			break;
+		}
+		if (h->type != LNKTYPE && (h->type != SYMTYPE || !r->symlink))
+			continue;
+		if (applyrepl(r, &linkbuf, h->link, h->linklen)) {
+			h->link = linkbuf.str;
+			h->linklen = linkbuf.len;
+			break;
+		}
+	}
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -1570,8 +1569,12 @@ main(int argc, char *argv[])
 			files.input = stdin;
 	}
 
-	while (readhdr(&bioin, &hdr))
-		writehdr(stdout, &hdr);
+	while (readhdr(&bioin, &hdr)) {
+		if (match(&hdr)) {
+			replace(&hdr);
+			writehdr(stdout, &hdr);
+		}
+	}
 	writehdr(stdout, NULL);
 	for (i = 0; i < patslen; ++i) {
 		if (!patsused[i])
