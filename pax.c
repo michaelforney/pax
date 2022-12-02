@@ -124,6 +124,7 @@ struct filelist {
 	struct file *pending;
 };
 
+static int exitstatus;
 static int aflag;
 static int cflag;
 static int dflag;
@@ -474,10 +475,12 @@ readustar(struct bufio *f, struct header *h)
 	           (struct timespec){.tv_sec = octnum(buf + 136, 12)};
 	h->atime = exthdr.fields & ATIME ? exthdr.atime :
 	           globexthdr.fields & ATIME ? globexthdr.atime :
-	           (struct timespec){.tv_sec = format == GNUTAR ? octnum(buf + 345, 12) : -1};
+	           format == GNUTAR ? (struct timespec){.tv_sec = octnum(buf + 345, 12)} :
+	           (struct timespec){.tv_nsec = UTIME_OMIT};
 	h->ctime = exthdr.fields & CTIME ? exthdr.ctime :
 	           globexthdr.fields & CTIME ? globexthdr.ctime :
-	           (struct timespec){.tv_sec = format == GNUTAR ? octnum(buf + 357, 12) : -1};
+	           format == GNUTAR ? (struct timespec){.tv_sec = octnum(buf + 357, 12)} :
+	           (struct timespec){.tv_nsec = UTIME_OMIT};
 	h->type = buf[156];
 	if (h->type == AREGTYPE)
 		h->type = REGTYPE;
@@ -1264,12 +1267,13 @@ writefile(FILE *unused, struct header *h)
 		retry = 0;
 		mkdirp(h->name, h->namelen);
 	}
+	mode = h->mode & ~(S_ISUID | S_ISGID);
 	switch (h->type) {
 	case REGTYPE:
 		flags = O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC;
 		if (kflag)
 			flags |= O_EXCL;
-		fd = openat(dest, h->name, flags, h->mode);
+		fd = openat(dest, h->name, flags, mode);
 		if (fd < 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
@@ -1297,7 +1301,7 @@ writefile(FILE *unused, struct header *h)
 		break;
 	case CHRTYPE:
 	case BLKTYPE:
-		mode = (h->type == CHRTYPE ? S_IFCHR : S_IFBLK) | h->mode;
+		mode |= h->type == CHRTYPE ? S_IFCHR : S_IFBLK;
 		if (mknodat(dest, h->name, mode, h->dev) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
@@ -1305,19 +1309,48 @@ writefile(FILE *unused, struct header *h)
 		}
 		break;
 	case DIRTYPE:
-		if (mkdirat(dest, h->name, h->mode) != 0) {
+		if (mkdirat(dest, h->name, mode) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
 			fatal("mkdir %s:", h->name);
 		}
 		break;
 	case FIFOTYPE:
-		if (mkfifoat(dest, h->name, h->mode) != 0) {
+		if (mkfifoat(dest, h->name, mode) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
 			fatal("mkfifo %s:", h->name);
 		}
 		break;
+	}
+	if (preserve & (ATIME | MTIME)) {
+		struct timespec ts[2];
+
+		ts[0] = preserve & ATIME ? h->atime : (struct timespec){.tv_nsec = UTIME_OMIT};
+		ts[1] = preserve & MTIME ? h->mtime : (struct timespec){.tv_nsec = UTIME_OMIT};
+		if (utimensat(dest, h->name, ts, 0) != 0) {
+			fprintf(stderr, "utimens %s: %s\n", h->name, strerror(errno));
+			exitstatus = 1;
+		}
+	}
+	if (preserve & (UID | GID)) {
+		uid_t uid;
+		gid_t gid;
+
+		uid = preserve & UID ? h->uid : -1;
+		gid = preserve & UID ? h->uid : -1;
+		if (fchownat(dest, h->name, uid, gid, 0) != 0) {
+			fprintf(stderr, "chown %s: %s\n", h->name, strerror(errno));
+			exitstatus = 1;
+		}
+		/* add back setuid/setgid bits if we preserved the uid/gid */
+		mode = h->mode;
+	}
+	if (preserve & MODE) {
+		if (fchmodat(dest, h->name, mode, 0) != 0) {
+			fprintf(stderr, "chmod %s: %s\n", h->name, strerror(errno));
+			exitstatus = 1;
+		}
 	}
 }
 
@@ -1536,7 +1569,6 @@ main(int argc, char *argv[])
 	curtime = time(NULL);
 	if (curtime == (time_t)-1)
 		fatal("time:");
-	umask(0);
 
 	switch (mode) {
 	case READ:
@@ -1593,4 +1625,6 @@ main(int argc, char *argv[])
 		if (!patsused[i])
 			fatal("pattern not matched: %s", pats[i]);
 	}
+
+	return exitstatus;
 }
