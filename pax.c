@@ -1376,13 +1376,15 @@ applyrepl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
 {
 	regmatch_t match[10];
 	size_t i, n, l;
-	const char *s;
+	const char *s, *p;
 	char *d;
-	int flags = 0;
+	int flags;
 
+	flags = 0;
 	b->len = 0;
-	while (oldlen > 0 && regexec(&r->old, old, LEN(match), match, flags) == 0) {
-		n = match[0].rm_so + (oldlen - match[0].rm_eo);
+	p = old;
+	while (regexec(&r->old, p, LEN(match), match, flags) == 0) {
+		n = match[0].rm_so;
 		for (s = r->new; *s; ++s) {
 			i = -1;
 			switch (*s) {
@@ -1393,7 +1395,7 @@ applyrepl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
 		}
 		d = sbufalloc(b, n + 1, 1024);
 		b->len += n;
-		memcpy(d, old, match[0].rm_so);
+		memcpy(d, p, match[0].rm_so);
 		d += match[0].rm_so;
 		for (s = r->new; *s; ++s) {
 			i = -1;
@@ -1403,22 +1405,20 @@ applyrepl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
 			}
 			if (i <= 9) {
 				l = match[i].rm_eo - match[i].rm_so;
-				memcpy(d, old + match[i].rm_so, l);
+				memcpy(d, p + match[i].rm_so, l);
 				d += l;
 			} else {
 				*d++ = *s;
 			}
 		}
-		memcpy(d, old + match[0].rm_eo, oldlen - match[0].rm_eo);
-		old += match[0].rm_eo;
-		oldlen -= match[0].rm_eo;
 		flags |= REG_NOTBOL;
+		p += match[0].rm_eo;
 		if (!r->global)
 			break;
 	}
-	if (!flags)
+	if (p == old)
 		return 0;
-	b->str[b->len] = 0;
+	sbufcat(b, p, oldlen - (p - old), 1024);
 	if (r->print)
 		fprintf(stderr, "%s >> %s\n", old, b->str);
 	return 1;
