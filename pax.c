@@ -153,7 +153,8 @@ static size_t patslen;
 static bool *patsused;
 static struct filelist files;
 static struct bufio bioin;
-static int dest = AT_FDCWD;
+static char *dest = "";
+static int destfd = AT_FDCWD;
 
 static void
 fatal(const char *fmt, ...)
@@ -1279,11 +1280,11 @@ writefile(FILE *unused, struct header *h)
 		flags = O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC;
 		if (kflag)
 			flags |= O_EXCL;
-		fd = openat(dest, h->name, flags, mode);
+		fd = openat(destfd, h->name, flags, mode);
 		if (fd < 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
-			fatal("open %s:", h->name);
+			fatal("open %s%s:", dest, h->name);
 		}
 		f = fdopen(fd, "w");
 		if (!f)
@@ -1292,40 +1293,40 @@ writefile(FILE *unused, struct header *h)
 		fclose(f);
 		break;
 	case LNKTYPE:
-		if (linkat(dest, h->link, dest, h->name, 0) != 0) {
+		if (linkat(destfd, h->link, destfd, h->name, 0) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
-			fatal("link %s:", h->name);
+			fatal("link %s%s:", dest, h->name);
 		}
 		break;
 	case SYMTYPE:
-		if (symlinkat(h->link, dest, h->name) != 0) {
+		if (symlinkat(h->link, destfd, h->name) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
-			fatal("symlink %s:", h->name);
+			fatal("symlink %s%s:", dest, h->name);
 		}
 		break;
 	case CHRTYPE:
 	case BLKTYPE:
 		mode |= h->type == CHRTYPE ? S_IFCHR : S_IFBLK;
-		if (mknodat(dest, h->name, mode, h->dev) != 0) {
+		if (mknodat(destfd, h->name, mode, h->dev) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
-			fatal("mknod %s:", h->name);
+			fatal("mknod %s%s:", dest, h->name);
 		}
 		break;
 	case DIRTYPE:
-		if (mkdirat(dest, h->name, mode) != 0) {
+		if (mkdirat(destfd, h->name, mode) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
-			fatal("mkdir %s:", h->name);
+			fatal("mkdir %s%s:", dest, h->name);
 		}
 		break;
 	case FIFOTYPE:
-		if (mkfifoat(dest, h->name, mode) != 0) {
+		if (mkfifoat(destfd, h->name, mode) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
-			fatal("mkfifo %s:", h->name);
+			fatal("mkfifo %s%s:", dest, h->name);
 		}
 		break;
 	}
@@ -1334,8 +1335,8 @@ writefile(FILE *unused, struct header *h)
 
 		ts[0] = preserve & ATIME ? h->atime : (struct timespec){.tv_nsec = UTIME_OMIT};
 		ts[1] = preserve & MTIME ? h->mtime : (struct timespec){.tv_nsec = UTIME_OMIT};
-		if (utimensat(dest, h->name, ts, 0) != 0) {
-			fprintf(stderr, "utimens %s: %s\n", h->name, strerror(errno));
+		if (utimensat(destfd, h->name, ts, 0) != 0) {
+			fprintf(stderr, "utimens %s%s: %s\n", dest, h->name, strerror(errno));
 			exitstatus = 1;
 		}
 	}
@@ -1345,16 +1346,16 @@ writefile(FILE *unused, struct header *h)
 
 		uid = preserve & UID ? h->uid : -1;
 		gid = preserve & UID ? h->uid : -1;
-		if (fchownat(dest, h->name, uid, gid, 0) != 0) {
-			fprintf(stderr, "chown %s: %s\n", h->name, strerror(errno));
+		if (fchownat(destfd, h->name, uid, gid, 0) != 0) {
+			fprintf(stderr, "chown %s%s: %s\n", dest, h->name, strerror(errno));
 			exitstatus = 1;
 		}
 		/* add back setuid/setgid bits if we preserved the uid/gid */
 		mode = h->mode;
 	}
 	if (preserve & MODE) {
-		if (fchmodat(dest, h->name, mode, 0) != 0) {
-			fprintf(stderr, "chmod %s: %s\n", h->name, strerror(errno));
+		if (fchmodat(destfd, h->name, mode, 0) != 0) {
+			fprintf(stderr, "chmod %s%s: %s\n", dest, h->name, strerror(errno));
 			exitstatus = 1;
 		}
 	}
@@ -1605,9 +1606,15 @@ main(int argc, char *argv[])
 	case COPY:
 		if (name || argc == 0)
 			usage();
-		dest = open(argv[--argc], O_SEARCH|O_DIRECTORY);
-		if (dest < 0)
-			fatal("open %s:", argv[argc]);
+		i = strlen(argv[--argc]);
+		dest = malloc(i + 2);
+		if (!dest)
+			fatal(NULL);
+		memcpy(dest, argv[argc], i);
+		memcpy(dest + i, "/", 2);
+		destfd = open(dest, O_SEARCH|O_DIRECTORY);
+		if (destfd < 0)
+			fatal("open %s:", dest);
 		writehdr = writefile;
 		break;
 	}
