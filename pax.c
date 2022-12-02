@@ -812,6 +812,15 @@ writerec(struct strbuf *ext, const char *fmt, ...)
 }
 
 static void
+writetimerec(struct strbuf *ext, char *kw, struct timespec *ts)
+{
+	if (ts->tv_nsec != 0)
+		writerec(ext, "%s=%ju.%.9ld", kw, (uintmax_t)ts->tv_sec, ts->tv_nsec % 1000000000);
+	else
+		writerec(ext, "%s=%ju", kw, (uintmax_t)ts->tv_sec);
+}
+
+static void
 writepax(FILE *f, struct header *h)
 {
 	static struct strbuf ext;
@@ -842,14 +851,13 @@ writepax(FILE *f, struct header *h)
 		h->size = 0;
 	}
 	if (h->mtime.tv_sec > 077777777777 || h->mtime.tv_nsec != 0) {
-		if (h->mtime.tv_nsec != 0) {
-			writerec(&ext, "mtime=%ju.%.9ld",
-				(uintmax_t)h->mtime.tv_sec, h->mtime.tv_nsec % 1000000000);
-		} else {
-			writerec(&ext, "mtime=%ju", (uintmax_t)h->mtime.tv_sec);
-		}
+		writetimerec(&ext, "mtime", &h->mtime);
 		h->mtime.tv_sec = 0;
 		h->mtime.tv_nsec = 0;
+	}
+	if (opt.times) {
+		writetimerec(&ext, "atime", &h->atime);
+		writetimerec(&ext, "ctime", &h->ctime);
 	}
 	if (strlen(h->uname) > 32) {
 		writerec(&ext, "uname=%s", h->uname);
