@@ -1386,10 +1386,10 @@ applyrepl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
 	while (regexec(&r->old, p, LEN(match), match, flags) == 0) {
 		n = match[0].rm_so;
 		for (s = r->new; *s; ++s) {
-			i = -1;
 			switch (*s) {
 			case '&':  i = 0; break;
-			case '\\': i = (unsigned char)*++s - '0'; break;
+			case '\\': i = *++s - '0'; break;
+			default:   i = -1; break;
 			}
 			n += i <= 9 ? match[i].rm_eo - match[i].rm_so : 1;
 		}
@@ -1398,10 +1398,10 @@ applyrepl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
 		memcpy(d, p, match[0].rm_so);
 		d += match[0].rm_so;
 		for (s = r->new; *s; ++s) {
-			i = -1;
 			switch (*s) {
 			case '&':  i = 0; break;
-			case '\\': i = (unsigned char)*++s - '0'; break;
+			case '\\': i = *++s - '0'; break;
+			default:   i = -1; break;
 			}
 			if (i <= 9) {
 				l = match[i].rm_eo - match[i].rm_so;
