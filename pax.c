@@ -1125,57 +1125,6 @@ parseopts(char *s)
 }
 
 static void
-parsereplstr(char *str)
-{
-	static struct replstr **end = &replstr;
-	struct replstr *r;
-	char *old, *new, delim;
-	int err;
-
-	delim = str[0];
-	if (!delim)
-		usage();
-	old = str + 1;
-	str = strchr(old, delim);
-	if (!str)
-		usage();
-	*str = 0;
-	new = str + 1;
-	str = strchr(new, delim);
-	if (!str)
-		usage();
-	*str = 0;
-
-	r = malloc(sizeof *r);
-	if (!r)
-		fatal(NULL);
-	r->next = NULL;
-	r->global = false;
-	r->print = false;
-	r->symlink = false;
-	for (;;) {
-		switch (*++str) {
-		case 'g': r->global = true; break;
-		case 'p': r->print = true; break;
-		case 's': r->symlink = false; break;
-		case 'S': r->symlink = true; break;
-		case 0: goto done;
-		}
-	}
-done:
-	err = regcomp(&r->old, old, REG_NEWLINE);
-	if (err != 0) {
-		char errbuf[256];
-
-		regerror(err, &r->old, errbuf, sizeof errbuf);
-		fatal("invalid regular expression: %s", errbuf);
-	}
-	r->new = new;
-	*end = r;
-	end = &r->next;
-}
-
-static void
 listhdr(FILE *f, struct header *h)
 {
 	char mode[11], time[13], info[23];
@@ -1409,6 +1358,57 @@ match(struct header *h)
 		}
 	}
 	return cflag;
+}
+
+static void
+parsereplstr(char *str)
+{
+	static struct replstr **end = &replstr;
+	struct replstr *r;
+	char *old, *new, delim;
+	int err;
+
+	delim = str[0];
+	if (!delim)
+		usage();
+	old = str + 1;
+	str = strchr(old, delim);
+	if (!str)
+		usage();
+	*str = 0;
+	new = str + 1;
+	str = strchr(new, delim);
+	if (!str)
+		usage();
+	*str = 0;
+
+	r = malloc(sizeof *r);
+	if (!r)
+		fatal(NULL);
+	r->next = NULL;
+	r->global = false;
+	r->print = false;
+	r->symlink = false;
+	for (;;) {
+		switch (*++str) {
+		case 'g': r->global = true; break;
+		case 'p': r->print = true; break;
+		case 's': r->symlink = false; break;
+		case 'S': r->symlink = true; break;
+		case 0: goto done;
+		}
+	}
+done:
+	err = regcomp(&r->old, old, REG_NEWLINE);
+	if (err != 0) {
+		char errbuf[256];
+
+		regerror(err, &r->old, errbuf, sizeof errbuf);
+		fatal("invalid regular expression: %s", errbuf);
+	}
+	r->new = new;
+	*end = r;
+	end = &r->next;
 }
 
 static int
