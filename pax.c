@@ -495,11 +495,11 @@ readustar(struct bufio *f, struct header *h)
 	} else {
 		linklen = strnlen(buf + 157, 100);
 		if (linklen == 100) {
-			h->link = malloc(linklen + 1);
-			if (!h->link)
-				fatal(NULL);
-			memcpy(h->link, buf + 157, linklen);
-			h->link[linklen] = '\0';
+			static char linkbuf[101];
+
+			memcpy(linkbuf, buf + 157, 100);
+			linkbuf[100] = '\0';
+			h->link = linkbuf;
 		} else {
 			h->link = buf + 157;
 		}
