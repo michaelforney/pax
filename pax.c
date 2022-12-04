@@ -576,7 +576,7 @@ extkeyval(struct extheader *h, const char *key, const char *val, size_t vallen)
 	} else if (strcmp(key, "gid") == 0) {
 		h->gid = decnum(val, vallen, &end);
 		if (end != val + vallen)
-			fatal("invalid extnded header: bad gid");
+			fatal("invalid extended header: bad gid");
 		h->fields |= GID;
 	} else if (strcmp(key, "gname") == 0) {
 		h->gname.len = 0;
@@ -604,7 +604,7 @@ extkeyval(struct extheader *h, const char *key, const char *val, size_t vallen)
 	} else if (strcmp(key, "uid") == 0) {
 		h->uid = decnum(val, vallen, &end);
 		if (end != val + vallen)
-			fatal("invalid extnded header: bad uid");
+			fatal("invalid extended header: bad uid");
 		h->fields |= UID;
 	} else if (strcmp(key, "uname") == 0) {
 		h->uname.len = 0;
