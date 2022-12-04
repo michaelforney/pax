@@ -1313,10 +1313,10 @@ writefile(FILE *unused, struct header *h)
 static int
 match(struct header *h)
 {
-	static struct {
+	static struct dir {
 		char *name;
 		size_t namelen;
-	} *dirs, *d;
+	} *dirs;
 	static size_t dirslen;
 	size_t i;
 
@@ -1335,6 +1335,8 @@ match(struct header *h)
 		case 0:
 			patsused[i] = 1;
 			if (!dflag && h->type == DIRTYPE) {
+				struct dir *d;
+
 				if ((dirslen & (dirslen - 1)) == 0) {
 					dirs = reallocarray(dirs, dirslen ? dirslen * 2 : 32, sizeof *dirs);
 					if (!dirs)
