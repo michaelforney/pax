@@ -1106,7 +1106,17 @@ parseopts(char *s)
 		}
 		if (*s == ',')
 			*s++ = '\0';
-		if (strcmp(key, "delete") == 0) {
+		if (strcmp(key, "linkdata") == 0) {
+			if (val)
+				fatal("option 'linkdata' must not have a value");
+			opt.linkdata = 1;
+		} else if (strcmp(key, "times") == 0) {
+			if (val)
+				fatal("option 'times' must not have a value");
+			opt.times = 1;
+		} else if (!val) {
+			fatal("option '%s' must have a value", key);
+		} else if (strcmp(key, "delete") == 0) {
 			for (size_t i = 0; i < LEN(keywords); ++i) {
 				switch (fnmatch(val, keywords[i].name, 0)) {
 				case 0: opt.delete |= keywords[i].field; break;
@@ -1120,16 +1130,8 @@ parseopts(char *s)
 			globexthdr_name = val;
 		} else if (strcmp(key, "invalid") == 0) {
 			fatal("option 'invalid' is not implemented");
-		} else if (strcmp(key, "linkdata") == 0) {
-			if (val)
-				fatal("option 'linkdata' should not have a value");
-			opt.linkdata = 1;
 		} else if (strcmp(key, "listopt") == 0) {
 			opt.listopt = val;
-		} else if (strcmp(key, "times") == 0) {
-			if (val)
-				fatal("option 'times' should not have a value");
-			opt.times = 1;
 		} else if (ext) {
 			extkeyval(&exthdr, key, val, end - val);
 		} else {
