@@ -57,6 +57,11 @@ enum field {
 	UNAME    = 1<<10,
 };
 
+struct keyword {
+	const char *name;
+	enum field field;
+};
+
 struct header {
 	char *name;
 	size_t namelen;
@@ -91,7 +96,7 @@ struct strbuf {
 };
 
 struct extheader {
-	enum field fields;
+	enum field fields, override;
 	struct strbuf path;
 	uid_t uid;
 	gid_t gid;
@@ -137,6 +142,17 @@ static int vflag;
 static int Xflag;
 static int follow;
 static int preserve = ATIME | MTIME;
+static const struct keyword keywords[] = {
+	{"atime", ATIME},
+	{"gid", GID},
+	{"gname", GNAME},
+	{"linkpath", LINKPATH},
+	{"mtime", MTIME},
+	{"path", PATH},
+	{"size", SIZE},
+	{"uid", UID},
+	{"uname", UNAME},
+};
 static struct {
 	enum field delete;
 	int linkdata;
@@ -485,7 +501,7 @@ readustar(struct bufio *f, struct header *h)
 	h->type = buf[156];
 	if (h->type == AREGTYPE)
 		h->type = REGTYPE;
-	
+
 	if (exthdr.fields & LINKPATH) {
 		h->link = exthdr.linkpath.str;
 		h->linklen = exthdr.linkpath.len;
@@ -562,57 +578,76 @@ parsetime(struct timespec *ts, const char *field, const char *str, size_t len)
 static void
 extkeyval(struct extheader *h, const char *key, const char *val, size_t vallen)
 {
+	enum field field;
 	char *end;
 
-	if (strcmp(key, "atime") == 0) {
+	field = 0;
+	for (size_t i = 0; i < LEN(keywords); ++i) {
+		if (strcmp(key, keywords[i].name) == 0) {
+			field = keywords[i].field;
+			break;
+		}
+	}
+	if (!field) {
+		if (strcmp(key, "charset") == 0) {
+		} else if (strcmp(key, "comment") == 0) {
+			/* ignore */
+		} else if (strcmp(key, "hdrcharset") == 0) {
+		} else if (strncmp(key, "realtime.", 9) == 0) {
+		} else if (strncmp(key, "security.", 9) == 0) {
+		} else {
+			fprintf(stderr, "ignoring unknown keyword '%s'\n", key);
+		}
+		return;
+	}
+	if (h->override & field)
+		return;
+
+	switch (field) {
+	case ATIME:
 		parsetime(&h->atime, "atime", val, vallen);
-		h->fields |= ATIME;
-	} else if (strcmp(key, "charset") == 0) {
-	} else if (strcmp(key, "comment") == 0) {
-		/* ignore */
-	} else if (strcmp(key, "ctime") == 0) {
+		break;
+	case CTIME:
 		parsetime(&h->ctime, "ctime", val, vallen);
-		h->fields |= CTIME;
-	} else if (strcmp(key, "gid") == 0) {
+		break;
+	case GID:
 		h->gid = decnum(val, vallen, &end);
 		if (end != val + vallen)
 			fatal("invalid extended header: bad gid");
-		h->fields |= GID;
-	} else if (strcmp(key, "gname") == 0) {
+		break;
+	case GNAME:
 		h->gname.len = 0;
 		sbufcat(&h->gname, val, vallen, 256);
-		h->fields |= GNAME;
-	} else if (strcmp(key, "hdrcharset") == 0) {
-	} else if (strcmp(key, "linkpath") == 0) {
+		break;
+	case LINKPATH:
 		h->linkpath.len = 0;
 		sbufcat(&h->linkpath, val, vallen, 1024);
-		h->fields |= LINKPATH;
-	} else if (strcmp(key, "mtime") == 0) {
+		break;
+	case MTIME:
 		parsetime(&h->mtime, "mtime", val, vallen);
-		h->fields |= MTIME;
-	} else if (strcmp(key, "path") == 0) {
+		break;
+	case PATH:
 		h->path.len = 0;
 		sbufcat(&h->path, val, vallen, 1024);
-		h->fields |= PATH;
-	} else if (strncmp(key, "realtime.", 9) == 0) {
-	} else if (strncmp(key, "security.", 9) == 0) {
-	} else if (strcmp(key, "size") == 0) {
+		break;
+	case SIZE:
 		h->size = decnum(val, vallen, &end);
 		if (end != val + vallen)
 			fatal("invalid extended header: bad size");
-		h->fields |= SIZE;
-	} else if (strcmp(key, "uid") == 0) {
+		break;
+	case UID:
 		h->uid = decnum(val, vallen, &end);
 		if (end != val + vallen)
 			fatal("invalid extended header: bad uid");
-		h->fields |= UID;
-	} else if (strcmp(key, "uname") == 0) {
+		break;
+	case UNAME:
 		h->uname.len = 0;
 		sbufcat(&h->uname, val, vallen, 256);
-		h->fields |= UNAME;
-	} else {
-		fprintf(stderr, "ignoring unknown keyword '%s'\n", key);
+		break;
+	default:
+		return;
 	}
+	h->fields |= field;
 }
 
 static void
@@ -671,7 +706,7 @@ readgnuhdr(struct bufio *f, struct strbuf *b, off_t len)
 static int
 readpax(struct bufio *f, struct header *h)
 {
-	exthdr.fields = 0;
+	exthdr.fields = exthdr.override;
 	while (readustar(f, h)) {
 		switch (h->type) {
 		case 'g': readexthdr(f, &globexthdr, h->size); break;
@@ -1072,31 +1107,11 @@ parseopts(char *s)
 		if (*s == ',')
 			*s++ = '\0';
 		if (strcmp(key, "delete") == 0) {
-			static const struct {
-				const char *name;
-				enum field field;
-			} kw[] = {
-				{"atime", ATIME},
-				{"gid", GID},
-				{"gname", GNAME},
-				{"linkpath", LINKPATH},
-				{"mtime", MTIME},
-				{"path", PATH},
-				{"size", SIZE},
-				{"uid", UID},
-				{"uname", UNAME},
-			};
-			size_t i;
-
-			for (i = 0; i < LEN(kw); ++i) {
-				switch (fnmatch(val, kw[i].name, 0)) {
-				case 0:
-					opt.delete |= kw[i].field;
-					break;
-				case FNM_NOMATCH:
-					break;
-				default:
-					fatal("fnmatch error");
+			for (size_t i = 0; i < LEN(keywords); ++i) {
+				switch (fnmatch(val, keywords[i].name, 0)) {
+				case 0: opt.delete |= keywords[i].field; break;
+				case FNM_NOMATCH: break;
+				default: fatal("fnmatch error");
 				}
 			}
 		} else if (strcmp(key, "exthdr.name") == 0) {
@@ -1104,7 +1119,7 @@ parseopts(char *s)
 		} else if (strcmp(key, "globexthdr.name") == 0) {
 			globexthdr_name = val;
 		} else if (strcmp(key, "invalid") == 0) {
-			fatal("option 'invalid' not implemented");
+			fatal("option 'invalid' is not implemented");
 		} else if (strcmp(key, "linkdata") == 0) {
 			if (val)
 				fatal("option 'linkdata' should not have a value");
@@ -1115,10 +1130,10 @@ parseopts(char *s)
 			if (val)
 				fatal("option 'times' should not have a value");
 			opt.times = 1;
+		} else if (ext) {
+			extkeyval(&exthdr, key, val, end - val);
 		} else {
-			(void)ext;
-			/* XXX: need to handle := */
-			extkeyval(&globexthdr, key, val, s - val);
+			extkeyval(&globexthdr, key, val, end - val);
 		}
 	}
 }
@@ -1577,6 +1592,7 @@ main(int argc, char *argv[])
 	curtime = time(NULL);
 	if (curtime == (time_t)-1)
 		fatal("time:");
+	exthdr.override = exthdr.fields;
 
 	switch (mode) {
 	case READ:
