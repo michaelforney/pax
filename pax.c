@@ -1046,32 +1046,31 @@ usage(void)
 static void
 parseopts(char *s)
 {
-	char *key, *val;
+	char *key, *val, *end, *d;
 	int ext;
 
-	while (s) {
+	for (;;) {
 		s += strspn(s, " \t\n\v\f\r");
-		key = s;
-		if (key[0] == '\0')
+		if (!*s)
 			break;
-		s = strchr(s, ',');
-		if (s) {
-			if (s > key && s[-1] == '\\')
-				fatal("escaped backslashes are not yet supported");
-			*s++ = '\0';
-		}
-		val = strchr(key, '=');
-		if (key == val)
-			fatal("invalid option: missing keyword");
-		if (val) {
-			if (val[-1] == ':') {
-				ext = 1;
-				val[-1] = '\0';
-			} else {
-				val[0] = '\0';
+		key = s;
+		while (*s && *s != ',' && *s != '=')
+			++s;
+		val = NULL;
+		if (*s == '=') {
+			ext = s > key && s[-1] == ':';
+			s[-ext] = '\0';
+			val = ++s;
+			for (d = s; *s && *s != ','; ++s, ++d) {
+				if (*s == '\\')
+					++s;
+				if (d < s)
+					*d = *s;
 			}
-			++val;
+			end = d;
 		}
+		if (*s == ',')
+			*s++ = '\0';
 		if (strcmp(key, "delete") == 0) {
 			static const struct {
 				const char *name;
