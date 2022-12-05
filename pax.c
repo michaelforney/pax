@@ -157,10 +157,10 @@ static struct {
 	enum field delete;
 	int linkdata;
 	const char *listopt;
+	const char *exthdrname;
+	const char *globexthdrname;
 	int times;
 } opt;
-static const char *exthdr_name;
-static const char *globexthdr_name;
 static struct extheader exthdr, globexthdr;
 static struct replstr *replstr;
 static time_t curtime;
@@ -1125,9 +1125,9 @@ parseopts(char *s)
 				}
 			}
 		} else if (strcmp(key, "exthdr.name") == 0) {
-			exthdr_name = val;
+			opt.exthdrname = val;
 		} else if (strcmp(key, "globexthdr.name") == 0) {
-			globexthdr_name = val;
+			opt.globexthdrname = val;
 		} else if (strcmp(key, "invalid") == 0) {
 			fatal("option 'invalid' is not implemented");
 		} else if (strcmp(key, "listopt") == 0) {
