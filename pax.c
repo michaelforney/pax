@@ -94,6 +94,13 @@ struct header {
 	int flag;
 };
 
+struct account {
+	char *name;
+	enum field type;
+	uid_t uid;
+	gid_t gid;
+};
+
 struct bufio {
 	int fd, err;
 	off_t off;
@@ -171,6 +178,8 @@ static struct header exthdr, globexthdr;
 static struct exthdrbuf exthdrbuf, globexthdrbuf;
 static struct replstr *replstr;
 static time_t curtime;
+static struct account *accts;
+static size_t acctslen;
 static char **pats;
 static size_t patslen;
 static bool *patsused;
@@ -379,6 +388,110 @@ copy(struct bufio *r, off_t nr, FILE *w, off_t nw)
 	for (; nr > sizeof b && nw > sizeof b; nr -= sizeof b, nw -= sizeof b)
 		copyblock(b, r, sizeof b, w, sizeof b);
 	copyblock(b, r, nr, w, nw);
+}
+
+static struct account *
+findaccount(const char *name, uid_t uid, gid_t gid)
+{
+	struct account *a;
+
+	for (a = accts; a < accts + acctslen; ++a) {
+		if ((uid == -1 || uid == a->uid) && (gid == -1 || gid == a->gid)
+		 && (!name || (a->name && strcmp(a->name, name) == 0)))
+			return a;
+	}
+	if ((acctslen & (acctslen - 1)) == 0) {
+		accts = reallocarray(accts, acctslen ? acctslen * 2 : 16, sizeof *accts);
+		if (!accts)
+			fatal(NULL);
+	}
+	a = &accts[acctslen++];
+	a->name = NULL;
+	a->type = 0;
+	a->uid = -1;
+	a->gid = -1;
+	if (name) {
+		a->name = strdup(name);
+		if (!a->name)
+			fatal(NULL);
+	}
+	return a;
+}
+
+static uid_t
+unametouid(const char *uname, uid_t fallback)
+{
+	struct account *a;
+	struct passwd *pw;
+
+	if (!*uname)
+		return fallback;
+	a = findaccount(uname, -1, -1);
+	if (~a->type & UID) {
+		a->type |= UID;
+		pw = getpwnam(uname);
+		a->uid = pw ? pw->pw_uid : -1;
+	}
+	return a->uid != -1 ? a->uid : fallback;
+}
+
+static gid_t
+gnametogid(const char *gname, gid_t fallback)
+{
+	struct account *a;
+	struct group *gr;
+
+	if (!*gname)
+		return fallback;
+	a = findaccount(gname, -1, -1);
+	if (~a->type & GID) {
+		a->type |= GID;
+		gr = getgrnam(gname);
+		a->gid = gr ? gr->gr_gid : -1;
+	}
+	return a->gid != -1 ? a->gid : fallback;
+}
+
+static char *
+uidtouname(uid_t uid, char *fallback)
+{
+	struct account *a;
+	struct passwd *pw;
+
+	a = findaccount(NULL, uid, -1);
+	if (~a->type & UID) {
+		a->type |= UID;
+		a->uid = uid;
+		assert(!a->name);
+		pw = getpwuid(uid);
+		if (pw) {
+			a->name = strdup(pw->pw_name);
+			if (!a->name)
+				fatal(NULL);
+		}
+	}
+	return a->name ? a->name : fallback;
+}
+
+static char *
+gidtogname(uid_t gid, char *fallback)
+{
+	struct account *a;
+	struct group *gr;
+
+	a = findaccount(NULL, -1, gid);
+	if (~a->type & GID) {
+		a->type |= GID;
+		a->gid = gid;
+		assert(!a->name);
+		gr = getgrgid(gid);
+		if (gr) {
+			a->name = strdup(gr->gr_name);
+			if (!a->name)
+				fatal(NULL);
+		}
+	}
+	return a->name ? a->name : fallback;
 }
 
 static unsigned long long
@@ -1097,8 +1210,8 @@ next:
 	h->atime = st.st_atim;
 	h->mtime = st.st_mtim;
 	h->ctime = st.st_ctim;
-	h->uname = "";
-	h->gname = "";
+	h->uname = uidtouname(st.st_uid, "");
+	h->gname = gidtogname(st.st_gid, "");
 	h->link = "";
 	h->linklen = 0;
 	h->dev = 0;
@@ -1425,8 +1538,8 @@ writefile(FILE *unused, struct header *h)
 		uid_t uid;
 		gid_t gid;
 
-		uid = preserve & UID ? h->uid : -1;
-		gid = preserve & UID ? h->uid : -1;
+		uid = preserve & UID ? unametouid(h->uname, h->uid) : -1;
+		gid = preserve & GID ? gnametogid(h->gname, h->gid) : -1;
 		if (fchownat(destfd, h->name, uid, gid, 0) != 0) {
 			fprintf(stderr, "chown %s%s: %s\n", dest, h->name, strerror(errno));
 			exitstatus = 1;
