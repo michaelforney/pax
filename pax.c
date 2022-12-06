@@ -1430,9 +1430,10 @@ writefile(FILE *unused, struct header *h)
 		if (fchownat(destfd, h->name, uid, gid, 0) != 0) {
 			fprintf(stderr, "chown %s%s: %s\n", dest, h->name, strerror(errno));
 			exitstatus = 1;
+		} else {
+			/* add back setuid/setgid bits if we preserved the uid/gid */
+			mode = h->mode;
 		}
-		/* add back setuid/setgid bits if we preserved the uid/gid */
-		mode = h->mode;
 	}
 	if (preserve & MODE) {
 		if (fchmodat(destfd, h->name, mode, 0) != 0) {
