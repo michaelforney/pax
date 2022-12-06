@@ -66,6 +66,11 @@ struct keyword {
 };
 
 struct header {
+	/* keywords present in this header */
+	enum field fields;
+	/* keywords ignored because they were overridden by an option */
+	enum field delete;
+
 	char *name;
 	size_t namelen;
 	mode_t mode;
@@ -101,13 +106,8 @@ struct strbuf {
 	size_t len, cap;
 };
 
-struct extheader {
-	enum field fields, override;
+struct exthdrbuf {
 	struct strbuf path;
-	uid_t uid;
-	gid_t gid;
-	off_t size;
-	struct timespec atime, mtime, ctime;
 	struct strbuf linkpath;
 	struct strbuf uname;
 	struct strbuf gname;
@@ -167,7 +167,8 @@ static struct {
 	const char *globexthdrname;
 	int times;
 } opt;
-static struct extheader exthdr, globexthdr;
+static struct header exthdr, globexthdr;
+static struct exthdrbuf exthdrbuf, globexthdrbuf;
 static struct replstr *replstr;
 static time_t curtime;
 static char **pats;
@@ -455,100 +456,62 @@ readustar(struct bufio *f, struct header *h)
 		format = GNUTAR;
 	else
 		format = V7;
-	if (exthdr.fields & PATH) {
-		h->name = exthdr.path.str;
-		h->namelen = exthdr.path.len;
-	} else if (globexthdr.fields & PATH) {
-		h->name = globexthdr.path.str;
-		h->namelen = globexthdr.path.len;
-	} else {
-		namelen = strnlen(buf, 100);
-		prefixlen = format == USTAR ? strnlen(buf + 345, 155) : 0;
-		if (namelen == 100 || prefixlen > 0) {
-			static char namebuf[257];
+	h->fields = PATH | UID | GID | SIZE;
+	namelen = strnlen(buf, 100);
+	prefixlen = format == USTAR ? strnlen(buf + 345, 155) : 0;
+	if (namelen == 100 || prefixlen > 0) {
+		static char namebuf[257];
 
-			if (prefixlen > 0) {
-				memcpy(namebuf, buf + 345, prefixlen);
-				namebuf[prefixlen] = '/';
-				++prefixlen;
-			}
-			memcpy(namebuf + prefixlen, buf, namelen);
-			namebuf[prefixlen + namelen] = '\0';
-			namelen += prefixlen;
-			h->name = namebuf;
-		} else {
-			h->name = buf;
+		if (prefixlen > 0) {
+			memcpy(namebuf, buf + 345, prefixlen);
+			namebuf[prefixlen] = '/';
+			++prefixlen;
 		}
-		h->namelen = namelen;
+		memcpy(namebuf + prefixlen, buf, namelen);
+		namebuf[prefixlen + namelen] = '\0';
+		namelen += prefixlen;
+		h->name = namebuf;
+	} else {
+		h->name = buf;
 	}
-
+	h->namelen = namelen;
 	h->mode = octnum(buf + 100, 8);
-	h->uid = exthdr.fields & UID ? exthdr.uid :
-	         globexthdr.fields & UID ? globexthdr.uid :
-	         octnum(buf + 108, 8);
-	h->gid = exthdr.fields & GID ? exthdr.gid :
-	         globexthdr.fields & GID ? globexthdr.gid :
-	         octnum(buf + 116, 8);
-	h->size = exthdr.fields & SIZE ? exthdr.size :
-	          globexthdr.fields & SIZE ? globexthdr.size :
-	          octnum(buf + 124, 12);
+	h->uid = octnum(buf + 108, 8);
+	h->gid = octnum(buf + 116, 8);
+	h->size = octnum(buf + 124, 12);
 	end = bioin.off + ROUNDUP(h->size, 512);
-	h->mtime = exthdr.fields & MTIME ? exthdr.mtime :
-	           globexthdr.fields & MTIME ? globexthdr.mtime :
-	           (struct timespec){.tv_sec = octnum(buf + 136, 12)};
-	h->atime = exthdr.fields & ATIME ? exthdr.atime :
-	           globexthdr.fields & ATIME ? globexthdr.atime :
-	           format == GNUTAR ? (struct timespec){.tv_sec = octnum(buf + 345, 12)} :
-	           (struct timespec){.tv_nsec = UTIME_OMIT};
-	h->ctime = exthdr.fields & CTIME ? exthdr.ctime :
-	           globexthdr.fields & CTIME ? globexthdr.ctime :
-	           format == GNUTAR ? (struct timespec){.tv_sec = octnum(buf + 357, 12)} :
-	           (struct timespec){.tv_nsec = UTIME_OMIT};
+	h->mtime = (struct timespec){.tv_sec = octnum(buf + 136, 12)};
+	if (format == GNUTAR) {
+		h->fields |= ATIME | CTIME;
+		h->atime = (struct timespec){.tv_sec = octnum(buf + 345, 12)};
+		h->ctime = (struct timespec){.tv_sec = octnum(buf + 357, 12)};
+	}
 	h->type = buf[156];
 	if (h->type == AREGTYPE)
 		h->type = REGTYPE;
 
-	if (exthdr.fields & LINKPATH) {
-		h->link = exthdr.linkpath.str;
-		h->linklen = exthdr.linkpath.len;
-	} else if (globexthdr.fields & LINKPATH) {
-		h->link = globexthdr.linkpath.str;
-		h->linklen = globexthdr.linkpath.len;
-	} else {
-		linklen = strnlen(buf + 157, 100);
-		if (linklen == 100) {
-			static char linkbuf[101];
+	linklen = strnlen(buf + 157, 100);
+	if (linklen > 0)
+		h->fields |= LINKPATH;
+	if (linklen == 100) {
+		static char linkbuf[101];
 
-			memcpy(linkbuf, buf + 157, 100);
-			linkbuf[100] = '\0';
-			h->link = linkbuf;
-		} else {
-			h->link = buf + 157;
-		}
+		memcpy(linkbuf, buf + 157, 100);
+		linkbuf[100] = '\0';
+		h->link = linkbuf;
 		h->linklen = linklen;
-	}
-	if (format == V7) {
-		h->uname = "";
-		h->gname = "";
 	} else {
-		if (exthdr.fields & UNAME) {
-			h->uname = exthdr.uname.str;
-		} else if (globexthdr.fields & UNAME) {
-			h->uname = globexthdr.uname.str;
-		} else {
-			h->uname = buf + 265;
-			if (!memchr(h->uname, '\0', 32))
-				fatal("uname is not NUL-terminated");
-		}
-		if (exthdr.fields & GNAME) {
-			h->gname = exthdr.gname.str;
-		} else if (globexthdr.fields & GNAME) {
-			h->gname = globexthdr.gname.str;
-		} else {
-			h->gname = buf + 297;
-			if (!memchr(h->gname, '\0', 32))
-				fatal("gname is not NUL-terminated");
-		}
+		h->link = buf + 157;
+	}
+	h->linklen = linklen;
+	if (format != V7) {
+		h->fields |= UNAME | GNAME;
+		h->uname = buf + 265;
+		if (!memchr(h->uname, '\0', 32))
+			fatal("uname is not NUL-terminated");
+		h->gname = buf + 297;
+		if (!memchr(h->gname, '\0', 32))
+			fatal("gname is not NUL-terminated");
 		if (h->type == CHRTYPE || h->type == BLKTYPE) {
 			unsigned major, minor;
 
@@ -582,7 +545,7 @@ parsetime(struct timespec *ts, const char *field, const char *str, size_t len)
 }
 
 static void
-extkeyval(struct extheader *h, const char *key, const char *val, size_t vallen)
+extkeyval(struct header *h, struct exthdrbuf *b, const char *key, const char *val, size_t vallen)
 {
 	enum field field;
 	char *end;
@@ -606,7 +569,7 @@ extkeyval(struct extheader *h, const char *key, const char *val, size_t vallen)
 		}
 		return;
 	}
-	if (h->override & field)
+	if ((h->delete | opt.delete) & field)
 		return;
 
 	switch (field) {
@@ -622,19 +585,24 @@ extkeyval(struct extheader *h, const char *key, const char *val, size_t vallen)
 			fatal("invalid extended header: bad gid");
 		break;
 	case GNAME:
-		h->gname.len = 0;
-		sbufcat(&h->gname, val, vallen, 256);
+		b->gname.len = 0;
+		sbufcat(&b->gname, val, vallen, 256);
+		h->gname = b->gname.str;
 		break;
 	case LINKPATH:
-		h->linkpath.len = 0;
-		sbufcat(&h->linkpath, val, vallen, 1024);
+		b->linkpath.len = 0;
+		sbufcat(&b->linkpath, val, vallen, 1024);
+		h->link = b->linkpath.str;
+		h->linklen = b->linkpath.len;
 		break;
 	case MTIME:
 		parsetime(&h->mtime, "mtime", val, vallen);
 		break;
 	case PATH:
-		h->path.len = 0;
-		sbufcat(&h->path, val, vallen, 1024);
+		b->path.len = 0;
+		sbufcat(&b->path, val, vallen, 1024);
+		h->name = b->path.str;
+		h->namelen = b->path.len;
 		break;
 	case SIZE:
 		h->size = decnum(val, vallen, &end);
@@ -647,8 +615,9 @@ extkeyval(struct extheader *h, const char *key, const char *val, size_t vallen)
 			fatal("invalid extended header: bad uid");
 		break;
 	case UNAME:
-		h->uname.len = 0;
-		sbufcat(&h->uname, val, vallen, 256);
+		b->uname.len = 0;
+		sbufcat(&b->uname, val, vallen, 256);
+		h->uname = b->uname.str;
 		break;
 	default:
 		return;
@@ -657,7 +626,7 @@ extkeyval(struct extheader *h, const char *key, const char *val, size_t vallen)
 }
 
 static void
-readexthdr(struct bufio *f, struct extheader *h, off_t len)
+readexthdr(struct bufio *f, struct header *h, struct exthdrbuf *b, off_t len)
 {
 	static struct strbuf buf;
 	size_t reclen, vallen;
@@ -687,7 +656,7 @@ readexthdr(struct bufio *f, struct extheader *h, off_t len)
 			fatal("invalid extended header: record has no '='");
 		*val++ = '\0';
 		vallen = end - val;
-		extkeyval(h, key, val, vallen);
+		extkeyval(h, b, key, val, vallen);
 		len -= reclen;
 		rec += reclen;
 	}
@@ -712,14 +681,33 @@ readgnuhdr(struct bufio *f, struct strbuf *b, off_t len)
 static int
 readpax(struct bufio *f, struct header *h)
 {
-	exthdr.fields = exthdr.override;
+	exthdr.fields = exthdr.delete;
 	while (readustar(f, h)) {
 		switch (h->type) {
-		case 'g': readexthdr(f, &globexthdr, h->size); break;
-		case 'x': readexthdr(f, &exthdr, h->size);     break;
-		case 'L': readgnuhdr(f, &exthdr.path, h->size),     exthdr.fields |= PATH;     break;
-		case 'K': readgnuhdr(f, &exthdr.linkpath, h->size), exthdr.fields |= LINKPATH; break;
-		default: return 1;
+		case 'g':
+			readexthdr(f, &globexthdr, &globexthdrbuf, h->size);
+			break;
+		case 'x':
+			readexthdr(f, &exthdr, &exthdrbuf, h->size);
+			break;
+		case 'L':
+			if ((exthdr.delete | opt.delete) & PATH)
+				break;
+			readgnuhdr(f, &exthdrbuf.path, h->size);
+			exthdr.name = exthdrbuf.path.str;
+			exthdr.namelen = exthdrbuf.path.len;
+			exthdr.fields |= PATH;
+			break;
+		case 'K':
+			if ((exthdr.delete | opt.delete) & LINKPATH)
+				break;
+			readgnuhdr(f, &exthdrbuf.linkpath, h->size);
+			exthdr.link = exthdrbuf.linkpath.str;
+			exthdr.linklen = exthdrbuf.linkpath.len;
+			exthdr.fields |= LINKPATH;
+			break;
+		default:
+			return 1;
 		}
 	}
 	return 0;
@@ -889,52 +877,30 @@ writetimerec(struct strbuf *ext, char *kw, struct timespec *ts)
 }
 
 static void
-writepax(FILE *f, struct header *h)
+writeexthdr(FILE *f, int type, struct header *h)
 {
 	static struct strbuf ext;
 	struct header exthdr;
 
-	if (!h) {
-		closeustar(f);
-		return;
-	}
-	if (vflag)
-		fprintf(stderr, "%s\n", h->name);
 	ext.len = 0;
-	if (h->namelen > 100) {
-		h->slash = splitname(h->name, h->namelen);
-		if (!h->slash)
-			writerec(&ext, "path=%s", h->name);
-	}
-	if (h->uid > MAXUGID) {
+	if (h->fields & PATH)
+		writerec(&ext, "path=%s", h->name);
+	if (h->fields & UID)
 		writerec(&ext, "uid=%ju", (uintmax_t)h->uid);
-		h->uid = 0;
-	}
-	if (h->gid > MAXUGID) {
+	if (h->fields & GID)
 		writerec(&ext, "gid=%ju", (uintmax_t)h->gid);
-		h->gid = 0;
-	}
-	if (h->size > MAXSIZE) {
+	if (h->fields & SIZE)
 		writerec(&ext, "size=%ju", (uintmax_t)h->size);
-		h->size = 0;
-	}
-	if (h->mtime.tv_sec > MAXTIME || h->mtime.tv_nsec != 0) {
+	if (h->fields & MTIME)
 		writetimerec(&ext, "mtime", &h->mtime);
-		h->mtime.tv_sec = 0;
-		h->mtime.tv_nsec = 0;
-	}
-	if (opt.times) {
+	if (h->fields & ATIME)
 		writetimerec(&ext, "atime", &h->atime);
+	if (h->fields & CTIME)
 		writetimerec(&ext, "ctime", &h->ctime);
-	}
-	if (strlen(h->uname) > 31) {
+	if (h->fields & UNAME)
 		writerec(&ext, "uname=%s", h->uname);
-		h->uname = "";
-	}
-	if (strlen(h->gname) > 31) {
+	if (h->fields & GNAME)
 		writerec(&ext, "gname=%s", h->gname);
-		h->gname = "";
-	}
 	if (ext.len > 0) {
 		memset(&exthdr, 0, sizeof exthdr);
 		exthdr.name = "pax_extended_header";
@@ -944,10 +910,117 @@ writepax(FILE *f, struct header *h)
 		exthdr.uname = "";
 		exthdr.gname = "";
 		exthdr.size = ext.len;
-		exthdr.type = 'x';
+		exthdr.type = type;
 		exthdr.data = ext.str;
 		writeustar(f, &exthdr);
 	}
+}
+
+static void
+mergehdr(struct header *dst, struct header *src, enum field fields)
+{
+	fields &= src->fields;
+	if (fields & PATH) {
+		dst->name = src->name;
+		dst->namelen = src->namelen;
+	}
+	if (fields & UID)
+		dst->uid = src->uid;
+	if (fields & GID)
+		dst->gid = src->gid;
+	if (fields & SIZE)
+		dst->size = src->size;
+	if (fields & MTIME)
+		dst->mtime = src->mtime;
+	if (fields & ATIME)
+		dst->atime = src->atime;
+	if (fields & CTIME)
+		dst->ctime = src->ctime;
+	if (fields & UNAME)
+		dst->uname = src->uname;
+	if (fields & GNAME)
+		dst->gname = src->gname;
+	if (fields & LINKPATH) {
+		dst->link = src->link;
+		dst->linklen = src->linklen;
+	}
+	dst->fields |= fields;
+}
+
+static void
+writepax(FILE *f, struct header *h)
+{
+	enum field fields;
+
+	if (!h) {
+		closeustar(f);
+		return;
+	}
+	if (vflag)
+		fprintf(stderr, "%s\n", h->name);
+	fields = 0;
+	if (h->namelen > 100) {
+		h->slash = splitname(h->name, h->namelen);
+		if (!h->slash)
+			fields |= PATH;
+	}
+	if (h->uid > MAXUGID)
+		fields |= UID;
+	if (h->gid > MAXUGID)
+		fields |= GID;
+	if (h->size > MAXSIZE)
+		fields |= SIZE;
+	if (h->mtime.tv_sec > MAXTIME || h->mtime.tv_nsec != 0)
+		fields |= MTIME;
+	if (opt.times) {
+		fields |= ATIME;
+		fields |= CTIME;
+	}
+	if (strlen(h->uname) > 31)
+		fields |= UNAME;
+	if (strlen(h->gname) > 31)
+		fields |= GNAME;
+	if (h->linklen > 100)
+		fields |= LINKPATH;
+	fields &= ~(exthdr.fields | opt.delete);
+	mergehdr(&exthdr, h, fields);
+	writeexthdr(f, 'x', &exthdr);
+
+	/* reset fields merged into extended header */
+	if (fields & PATH) {
+		h->name = "";
+		h->namelen = 0;
+	}
+	if (fields & UID)
+		h->uid = 0;
+	if (fields & GID)
+		h->gid = 0;
+	if (fields & SIZE)
+		h->size = 0;
+	if (fields & MTIME) {
+		if (h->mtime.tv_sec > MAXTIME)
+			h->mtime.tv_sec = MAXTIME;
+		h->mtime.tv_nsec = 0;
+	}
+	if (fields & ATIME) {
+		if (h->atime.tv_sec > MAXTIME)
+			h->atime.tv_sec = MAXTIME;
+		h->atime.tv_nsec = 0;
+	}
+	if (fields & CTIME) {
+		if (h->ctime.tv_sec > MAXTIME)
+			h->ctime.tv_sec = MAXTIME;
+		h->ctime.tv_nsec = 0;
+	}
+	if (fields & UNAME)
+		h->uname = "";
+	if (fields & GNAME)
+		h->gname = "";
+	if (fields & LINKPATH) {
+		h->link = "";
+		h->linklen = 0;
+	}
+	h->fields &= ~fields;
 	writeustar(f, h);
 }
 
@@ -1013,6 +1086,7 @@ next:
 		fatal("stat %s:", name.str);
 	if (Xflag && dev && st.st_dev != dev)
 		goto next;
+	h->fields = PATH | UID | GID | ATIME | MTIME | CTIME;
 	h->name = name.str;
 	h->namelen = name.len;
 	h->slash = NULL;
@@ -1153,9 +1227,9 @@ parseopts(char *s)
 		} else if (strcmp(key, "listopt") == 0) {
 			opt.listopt = val;
 		} else if (ext) {
-			extkeyval(&exthdr, key, val, end - val);
+			extkeyval(&exthdr, &exthdrbuf, key, val, end - val);
 		} else {
-			extkeyval(&globexthdr, key, val, end - val);
+			extkeyval(&globexthdr, &globexthdrbuf, key, val, end - val);
 		}
 	}
 }
@@ -1530,9 +1604,9 @@ replace(struct header *h)
 	struct replstr *r;
 
 	for (r = replstr; r; r = r->next) {
-		if (applyrepl(r, &exthdr.path, h->name, h->namelen)) {
-			h->name = exthdr.path.str;
-			h->namelen = exthdr.path.len;
+		if (applyrepl(r, &exthdrbuf.path, h->name, h->namelen)) {
+			h->name = exthdrbuf.path.str;
+			h->namelen = exthdrbuf.path.len;
 			break;
 		}
 	}
@@ -1541,9 +1615,9 @@ replace(struct header *h)
 	for (r = replstr; r; r = r->next) {
 		if (h->type == SYMTYPE && !r->symlink)
 			continue;
-		if (applyrepl(r, &exthdr.linkpath, h->link, h->linklen)) {
-			h->link = exthdr.linkpath.str;
-			h->linklen = exthdr.linkpath.len;
+		if (applyrepl(r, &exthdrbuf.linkpath, h->link, h->linklen)) {
+			h->link = exthdrbuf.linkpath.str;
+			h->linklen = exthdrbuf.linkpath.len;
 			break;
 		}
 	}
@@ -1636,7 +1710,10 @@ main(int argc, char *argv[])
 	curtime = time(NULL);
 	if (curtime == (time_t)-1)
 		fatal("time:");
-	exthdr.override = exthdr.fields;
+	exthdr.fields &= ~opt.delete;
+	exthdr.delete = exthdr.fields;
+	globexthdr.fields &= ~opt.delete;
+	globexthdr.delete = globexthdr.fields;
 
 	switch (mode) {
 	case READ:
@@ -1657,12 +1734,15 @@ main(int argc, char *argv[])
 	case WRITE:
 		if (name && strcmp(name, "-") != 0 && !freopen(name, "w", stdout))
 			fatal("open %s:", name);
-		if (strcmp(format, "ustar") == 0)
+		if (strcmp(format, "ustar") == 0) {
 			writehdr = writeustar;
-		else if (strcmp(format, "pax") == 0)
+		} else if (strcmp(format, "pax") == 0) {
 			writehdr = writepax;
-		else
+			if (globexthdr.fields)
+				writeexthdr(stdout, 'g', &globexthdr);
+		} else {
 			fatal("unsupported archive format '%s'", arg);
+		}
 		break;
 	case COPY:
 		if (name || argc == 0)
@@ -1689,6 +1769,8 @@ main(int argc, char *argv[])
 	}
 
 	while (readhdr(&bioin, &hdr)) {
+		mergehdr(&hdr, &exthdr, ~0);
+		mergehdr(&hdr, &globexthdr, ~exthdr.fields);
 		if (match(&hdr)) {
 			replace(&hdr);
 			writehdr(stdout, &hdr);
