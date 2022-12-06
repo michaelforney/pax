@@ -1239,6 +1239,11 @@ writefile(FILE *unused, struct header *h)
 
 	if (!h)
 		return;
+	if (uflag && fstatat(destfd, h->name, &st, 0) == 0) {
+		if (h->mtime.tv_sec < st.st_mtime || (h->mtime.tv_sec == st.st_mtime
+		 && h->mtime.tv_nsec < st.st_mtim.tv_nsec))
+			return;
+	}
 	if (vflag)
 		fprintf(stderr, "%s\n", h->name);
 	if (lflag && h->file && h->type != DIRTYPE) {
