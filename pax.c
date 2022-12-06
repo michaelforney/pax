@@ -747,7 +747,7 @@ closeustar(FILE *f)
 static void
 writeustar(FILE *f, struct header *h)
 {
-	char buf[8192], *slash;
+	char buf[512], *slash;
 	unsigned long sum;
 	int i;
 
