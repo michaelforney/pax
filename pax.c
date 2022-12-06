@@ -806,8 +806,8 @@ writeustar(FILE *f, struct header *h)
 	memset(buf + 500, 0, 12);
 	sum = 0;
 	for (i = 0; i < 512; ++i)
-		sum += buf[i];
-	snprintf(buf + 148, 8, "%.7lo", sum & 07777777);
+		sum += ((unsigned char *)buf)[i];
+	snprintf(buf + 148, 8, "%.7lo", sum);
 	if (fwrite(buf, 512, 1, f) != 1)
 		fatal("write:");
 	if (h->data) {
