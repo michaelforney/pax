@@ -1234,6 +1234,7 @@ writefile(FILE *unused, struct header *h)
 {
 	FILE *f;
 	int fd, retry, flags;
+	struct stat st;
 	mode_t mode;
 
 	if (!h)
@@ -1295,6 +1296,11 @@ writefile(FILE *unused, struct header *h)
 		if (mkdirat(destfd, h->name, mode) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
+			if (errno == EEXIST) {
+				if (fstatat(destfd, h->name, &st, 0) == 0 && S_ISDIR(st.st_mode))
+					break;
+				errno = EEXIST;
+			}
 			fatal("mkdir %s%s:", dest, h->name);
 		}
 		break;
@@ -1302,6 +1308,11 @@ writefile(FILE *unused, struct header *h)
 		if (mkfifoat(destfd, h->name, mode) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
+			if (errno == EEXIST) {
+				if (fstatat(destfd, h->name, &st, 0) == 0 && S_ISFIFO(st.st_mode))
+					break;
+				errno = EEXIST;
+			}
 			fatal("mkfifo %s%s:", dest, h->name);
 		}
 		break;
