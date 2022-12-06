@@ -791,10 +791,10 @@ writeustar(FILE *f, struct header *h)
 	strncpy(buf + 157, h->link, 100);
 	memcpy(buf + 257, "ustar", 6);
 	memcpy(buf + 263, "00", 2);
-	if (strlen(h->uname) > 32)
+	if (strlen(h->uname) > 31)
 		fatal("user name is too long: %s\n", h->uname);
 	strncpy(buf + 265, h->uname, 32);
-	if (strlen(h->gname) > 32)
+	if (strlen(h->gname) > 31)
 		fatal("group name is too long: %s\n", h->gname);
 	strncpy(buf + 297, h->gname, 32);
 	if (major(h->dev) > 07777777)
@@ -896,11 +896,11 @@ writepax(FILE *f, struct header *h)
 		writetimerec(&ext, "atime", &h->atime);
 		writetimerec(&ext, "ctime", &h->ctime);
 	}
-	if (strlen(h->uname) > 32) {
+	if (strlen(h->uname) > 31) {
 		writerec(&ext, "uname=%s", h->uname);
 		h->uname = "";
 	}
-	if (strlen(h->gname) > 32) {
+	if (strlen(h->gname) > 31) {
 		writerec(&ext, "gname=%s", h->gname);
 		h->gname = "";
 	}
