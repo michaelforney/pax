@@ -27,6 +27,9 @@
 
 #define LEN(a) (sizeof (a) / sizeof *(a))
 #define ROUNDUP(x, a) (((x) + ((a) - 1)) & ~((a) - 1))
+#define MAXTIME 077777777777
+#define MAXSIZE 077777777777
+#define MAXUGID 07777777
 
 enum mode {
 	LIST,
@@ -775,16 +778,16 @@ writeustar(FILE *f, struct header *h)
 	if (h->mode < 0 || h->mode > 07777777)
 		fatal("mode is too large: %ju", (uintmax_t)h->mode);
 	snprintf(buf + 100, 8, "%.7lo", (unsigned long)h->mode);
-	if (h->uid < 0 || h->uid > 07777777)
+	if (h->uid < 0 || h->uid > MAXUGID)
 		fatal("uid is too large: %ju", (uintmax_t)h->uid);
 	snprintf(buf + 108, 8, "%.7lo", (unsigned long)h->uid);
-	if (h->gid < 0 || h->gid > 07777777)
+	if (h->gid < 0 || h->gid > MAXUGID)
 		fatal("gid is too large: %ju", (uintmax_t)h->gid);
 	snprintf(buf + 116, 8, "%.7lo", (unsigned long)h->gid);
-	if (h->size < 0 || h->size > 077777777777)
+	if (h->size < 0 || h->size > MAXSIZE)
 		fatal("size is too large: %ju", (uintmax_t)h->size);
 	snprintf(buf + 124, 12, "%.11llo", (unsigned long long)h->size);
-	if (h->mtime.tv_sec < 0 || h->mtime.tv_sec > 077777777777)
+	if (h->mtime.tv_sec < 0 || h->mtime.tv_sec > MAXTIME)
 		fatal("mtime is too large: %ju", (uintmax_t)h->mtime.tv_sec);
 	snprintf(buf + 136, 12, "%.11llo", (unsigned long long)h->mtime.tv_sec);
 	memset(buf + 148, ' ', 8);
@@ -878,19 +881,19 @@ writepax(FILE *f, struct header *h)
 		if (!h->slash)
 			writerec(&ext, "path=%s", h->name);
 	}
-	if (h->uid > 07777777) {
+	if (h->uid > MAXUGID) {
 		writerec(&ext, "uid=%ju", (uintmax_t)h->uid);
 		h->uid = 0;
 	}
-	if (h->gid > 07777777) {
+	if (h->gid > MAXUGID) {
 		writerec(&ext, "gid=%ju", (uintmax_t)h->gid);
 		h->gid = 0;
 	}
-	if (h->size > 077777777777) {
+	if (h->size > MAXSIZE) {
 		writerec(&ext, "size=%ju", (uintmax_t)h->size);
 		h->size = 0;
 	}
-	if (h->mtime.tv_sec > 077777777777 || h->mtime.tv_nsec != 0) {
+	if (h->mtime.tv_sec > MAXTIME || h->mtime.tv_nsec != 0) {
 		writetimerec(&ext, "mtime", &h->mtime);
 		h->mtime.tv_sec = 0;
 		h->mtime.tv_nsec = 0;
