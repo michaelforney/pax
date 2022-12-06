@@ -739,6 +739,29 @@ splitname(char *name, size_t namelen)
 }
 
 static void
+openfile(struct header *h)
+{
+	int fd;
+
+	if (h->file) {
+		fd = open(h->file, O_RDONLY);
+		if (fd < 0)
+			fatal("open %s:", h->file);
+		bioinit(&bioin, fd);
+	}
+}
+
+static void
+closefile(struct header *h)
+{
+	if (h->file) {
+		if (tflag)
+			futimens(bioin.fd, (struct timespec[2]){h->atime, {.tv_nsec = UTIME_OMIT}});
+		close(bioin.fd);
+	}
+}
+
+static void
 closeustar(FILE *f)
 {
 	char pad[512];
@@ -826,7 +849,9 @@ writeustar(FILE *f, struct header *h)
 		if (fwrite(bioin.buf, 1, pad, f) != pad)
 			fatal("write:");
 	} else {
+		openfile(h);
 		copy(&bioin, h->size, f, ROUNDUP(h->size, 512));
+		closefile(h);
 	}
 }
 
@@ -948,19 +973,13 @@ static int
 readfile(struct bufio *f, struct header *h)
 {
 	static struct strbuf name, link;
-	static struct timespec ts[2] = {[1].tv_nsec = UTIME_OMIT};
 	struct stat st;
-	int flag, fd;
+	int flag;
 	DIR *dir;
 	struct dirent *d;
 	ssize_t ret;
 	dev_t dev;
 
-	if (bioin.fd >= 0) {
-		if (tflag)
-			futimens(bioin.fd, ts);
-		close(bioin.fd);
-	}
 next:
 	flag = follow == 'L' ? 0 : AT_SYMLINK_NOFOLLOW;
 	if (files.pending) {
@@ -1017,12 +1036,6 @@ next:
 	case S_IFREG:
 		h->type = REGTYPE;
 		h->size = st.st_size;
-		fd = open(name.str, O_RDONLY);
-		if (fd < 0)
-			fatal("open %s:", name.str);
-		bioinit(&bioin, fd);
-		if (tflag)
-			ts[0] = st.st_atim;
 		break;
 	case S_IFLNK:
 		h->type = SYMTYPE;
@@ -1271,7 +1284,9 @@ writefile(FILE *unused, struct header *h)
 		f = fdopen(fd, "w");
 		if (!f)
 			fatal("open %s:", h->name);
+		openfile(h);
 		copy(&bioin, h->size, f, h->size);
+		closefile(h);
 		fclose(f);
 		break;
 	case LNKTYPE:
