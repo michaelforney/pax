@@ -81,6 +81,9 @@ struct header {
 	char *slash;
 	/* read this data instead of stdin */
 	char *data;
+	/* source file path and flags for hard link (-l flag) */
+	char *file;
+	int flag;
 };
 
 struct bufio {
@@ -944,7 +947,7 @@ readfile(struct bufio *f, struct header *h)
 	static struct strbuf name, link;
 	static struct timespec ts[2] = {[1].tv_nsec = UTIME_OMIT};
 	struct stat st;
-	int flags, fd;
+	int flag, fd;
 	DIR *dir;
 	struct dirent *d;
 	ssize_t ret;
@@ -956,7 +959,7 @@ readfile(struct bufio *f, struct header *h)
 		close(bioin.fd);
 	}
 next:
-	flags = follow == 'L' ? 0 : AT_SYMLINK_NOFOLLOW;
+	flag = follow == 'L' ? 0 : AT_SYMLINK_NOFOLLOW;
 	if (files.pending) {
 		struct file *f;
 
@@ -966,7 +969,7 @@ next:
 		name.len = f->pathlen;
 		sbufcat(&name, f->name, f->namelen, 1024);
 		if (follow == 'H' && f->pathlen > 0)
-			flags &= ~AT_SYMLINK_NOFOLLOW;
+			flag &= ~AT_SYMLINK_NOFOLLOW;
 		dev = f->dev;
 		free(f);
 	} else {
@@ -984,7 +987,7 @@ next:
 		dev = 0;
 	}
 
-	if (fstatat(AT_FDCWD, name.str, &st, flags) != 0)
+	if (fstatat(AT_FDCWD, name.str, &st, flag) != 0)
 		fatal("stat %s:", name.str);
 	if (Xflag && dev && st.st_dev != dev)
 		goto next;
@@ -1003,7 +1006,10 @@ next:
 	h->link = "";
 	h->linklen = 0;
 	h->dev = 0;
+	h->slash = NULL;
 	h->data = NULL;
+	h->file = name.str;
+	h->flag = flag;
 	switch (st.st_mode & S_IFMT) {
 	case S_IFREG:
 		h->type = REGTYPE;
@@ -1231,6 +1237,10 @@ writefile(FILE *unused, struct header *h)
 		return;
 	if (vflag)
 		fprintf(stderr, "%s\n", h->name);
+	if (lflag && h->file && h->type != DIRTYPE) {
+		if (linkat(AT_FDCWD, h->file, destfd, h->name, h->flag) == 0)
+			return;
+	}
 	retry = 1;
 	if (0) {
 	retry:
