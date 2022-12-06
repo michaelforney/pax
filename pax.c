@@ -769,10 +769,8 @@ writeustar(FILE *f, struct header *h)
 		strncpy(buf, h->name, 100);
 		memset(buf + 345, 0, 155);
 	}
-	if (h->mode < 0 || h->mode > 07777777) {
+	if (h->mode < 0 || h->mode > 07777777)
 		fatal("mode is too large: %ju", (uintmax_t)h->mode);
-		exit(1);
-	}
 	snprintf(buf + 100, 8, "%.7lo", (unsigned long)h->mode);
 	if (h->uid < 0 || h->uid > 07777777)
 		fatal("uid is too large: %ju", (uintmax_t)h->uid);
