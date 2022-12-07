@@ -499,7 +499,7 @@ gidtogname(uid_t gid, char *fallback)
 }
 
 static unsigned long long
-octnum(char *str, size_t len)
+octnum(const char *str, size_t len)
 {
 	unsigned c;
 	unsigned long long n;
@@ -1194,10 +1194,8 @@ writepax(FILE *f, struct header *h)
 		fields |= SIZE;
 	if (h->mtime.tv_sec > MAXTIME || h->mtime.tv_nsec != 0)
 		fields |= MTIME;
-	if (opt.times) {
-		fields |= ATIME;
-		fields |= CTIME;
-	}
+	if (opt.times)
+		fields |= ATIME | CTIME;
 	if (strlen(h->uname) > 31)
 		fields |= UNAME;
 	if (strlen(h->gname) > 31)
@@ -1209,10 +1207,8 @@ writepax(FILE *f, struct header *h)
 	writeexthdr(f, 'x', &exthdr);
 
 	/* reset fields merged into extended header */
-	if (fields & PATH) {
-		h->name = "";
-		h->namelen = 0;
-	}
+	if (fields & PATH)
+		h->name = "", h->namelen = 0;
 	if (fields & UID)
 		h->uid = 0;
 	if (fields & GID)
@@ -1238,10 +1234,8 @@ writepax(FILE *f, struct header *h)
 		h->uname = "";
 	if (fields & GNAME)
 		h->gname = "";
-	if (fields & LINKPATH) {
-		h->link = "";
-		h->linklen = 0;
-	}
+	if (fields & LINKPATH)
+		h->link = "", h->linklen = 0;
 	h->fields &= ~fields;
 	writeustar(f, h);
 }
