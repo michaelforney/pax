@@ -1408,6 +1408,7 @@ parseopts(char *s)
 		while (*s && *s != ',' && *s != '=')
 			++s;
 		val = NULL;
+		end = NULL, ext = 0;  /* silence gcc uninitialized warning */
 		if (*s == '=') {
 			ext = s > key && s[-1] == ':';
 			s[-ext] = '\0';
