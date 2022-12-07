@@ -502,7 +502,7 @@ octnum(char *str, size_t len)
 
 	n = 0;
 	while (len > 0) {
-		c = (unsigned char)*str;
+		c = *str;
 		if (c == ' ' || c == '\0')
 			break;
 		c -= '0';
