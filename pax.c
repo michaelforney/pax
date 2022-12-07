@@ -76,7 +76,10 @@ struct header {
 
 	char *name;
 	size_t namelen;
+	dev_t dev;
+	ino_t ino;
 	mode_t mode;
+	nlink_t nlink;
 	uid_t uid;
 	gid_t gid;
 	dev_t rdev;
@@ -859,6 +862,8 @@ readcpio(struct bufio *f, struct header *h)
 		return 0;
 
 	h->fields = PATH | MODE | UID | GID | MTIME | SIZE;
+	h->dev = octnum(buf + 6, 6);
+	h->ino = octnum(buf + 12, 6);
 	type = octnum(buf + 18, 6);
 	h->mode = type & 07777;
 	type &= ~07777;
@@ -875,6 +880,7 @@ readcpio(struct bufio *f, struct header *h)
 	h->gid = octnum(buf + 30, 6);
 	h->uname = "";
 	h->gname = "";
+	h->nlink = octnum(buf + 36, 6);
 	h->rdev = octnum(buf + 42, 6);
 	h->mtime = (struct timespec){.tv_sec = octnum(buf + 48, 11)};
 	h->size = octnum(buf + 65, 11);
@@ -1242,6 +1248,64 @@ writepax(FILE *f, struct header *h)
 }
 
 static void
+writecpio(FILE *f, struct header *h)
+{
+	char buf[77];
+	unsigned long mode;
+	unsigned long long size;
+
+	memcpy(buf, "070707", 6);
+	if (!h) {
+		memset(buf + 6, '0', 70);
+		memcpy(buf + 59, "000013", 6);
+		if (fwrite(buf, 1, 76, f) != 76)
+			fatal("write:");
+		if (fwrite("TRAILER!!!", 1, 11, f) != 11)
+			fatal("write:");
+		return;
+	}
+	if (vflag)
+		fprintf(stderr, "%s\n", h->name);
+	memset(buf + 6, '0', 12);
+	mode = h->mode;
+	switch (h->type) {
+	case DIRTYPE: mode |= S_IFDIR; break;
+	case FIFOTYPE: mode |= S_IFIFO; break;
+	case REGTYPE: mode |= S_IFREG; break;
+	case SYMTYPE: mode |= S_IFLNK; break;
+	case BLKTYPE: mode |= S_IFBLK; break;
+	case CHRTYPE: mode |= S_IFCHR; break;
+	default: fatal("unknown or unsupported header type");
+	}
+	snprintf(buf + 18, 7, "%.6lo", mode);
+	snprintf(buf + 24, 7, "%.6lo", (unsigned long)h->uid);
+	snprintf(buf + 30, 7, "%.6lo", (unsigned long)h->gid);
+	snprintf(buf + 36, 7, "%.6o", 1);
+	snprintf(buf + 42, 7, "%.6lo", (unsigned long)h->rdev);
+	snprintf(buf + 48, 12, "%.11llo", (unsigned long long)h->mtime.tv_sec);
+	snprintf(buf + 59, 7, "%.6lo", h->namelen + 1);
+	size = h->type == SYMTYPE ? h->linklen : h->size;
+	snprintf(buf + 65, 12, "%.11llo", size);
+	if (fwrite(buf, 1, 76, f) != 76)
+		fatal("write:");
+	if (fwrite(h->name, 1, h->namelen + 1, f) != h->namelen + 1)
+		fatal("write:");
+	switch (h->type) {
+	case SYMTYPE:
+		if (fwrite(h->link, 1, h->linklen, f) != h->linklen)
+			fatal("write:");
+		break;
+	case REGTYPE:
+		openfile(h);
+		copy(&bioin, h->size, f, h->size);
+		closefile(h);
+		break;
+	default:
+		break;
+	}
+}
+
+static void
 filepush(struct filelist *files, const char *name, size_t pathlen, dev_t dev)
 {
 	struct file *f;
@@ -1306,19 +1370,21 @@ next:
 	h->fields = PATH | UID | GID | ATIME | MTIME | CTIME;
 	h->name = name.str;
 	h->namelen = name.len;
-	h->slash = NULL;
+	h->dev = st.st_dev;
+	h->ino = st.st_ino;
 	h->mode = st.st_mode & ~S_IFMT;
+	h->nlink = st.st_nlink;
 	h->uid = st.st_uid;
 	h->gid = st.st_gid;
+	h->uname = uidtouname(st.st_uid, "");
+	h->gname = gidtogname(st.st_gid, "");
+	h->rdev = 0;
 	h->size = 0;
 	h->atime = st.st_atim;
 	h->mtime = st.st_mtim;
 	h->ctime = st.st_ctim;
-	h->uname = uidtouname(st.st_uid, "");
-	h->gname = gidtogname(st.st_gid, "");
 	h->link = "";
 	h->linklen = 0;
-	h->rdev = 0;
 	h->slash = NULL;
 	h->data = NULL;
 	h->file = name.str;
@@ -1962,8 +2028,10 @@ main(int argc, char *argv[])
 			writehdr = writepax;
 			if (globexthdr.fields)
 				writeexthdr(stdout, 'g', &globexthdr);
+		} else if (strcmp(format, "cpio") == 0) {
+			writehdr = writecpio;
 		} else {
-			fatal("unsupported archive format '%s'", arg);
+			fatal("unsupported archive format '%s'", format);
 		}
 		break;
 	case COPY:
