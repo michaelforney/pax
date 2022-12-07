@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <cpio.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <fnmatch.h>
@@ -141,6 +142,9 @@ struct filelist {
 	FILE *input;
 	struct file *pending;
 };
+
+typedef int readfn(struct bufio *, struct header *);
+typedef void writefn(FILE *, struct header *);
 
 static int exitstatus;
 static int aflag;
@@ -507,13 +511,11 @@ octnum(char *str, size_t len)
 			break;
 		c -= '0';
 		if (c > 7)
-			fatal("invalid ustar number field");
+			fatal("invalid number field");
 		n = n * 8 + c;
 		++str;
 		--len;
 	}
-	if (len == 0)
-		fatal("invalid ustar number field: missing terminator");
 	return n;
 }
 
@@ -824,6 +826,113 @@ readpax(struct bufio *f, struct header *h)
 		}
 	}
 	return 0;
+}
+
+static int
+readcpio(struct bufio *f, struct header *h)
+{
+	static struct strbuf name, link;
+	static off_t end;
+	unsigned long type;
+	char buf[76];
+
+	if (bioskip(f, end - bioin.off) != 0 || bioread(f, buf, sizeof buf) != sizeof buf) {
+		if (f->err)
+			fatal("read: %s", strerror(errno));
+		fatal("archive truncated");
+	}
+	if (memcmp(buf, "070707", 6) != 0)
+		fatal("invalid cpio header: bad magic");
+	h->namelen = octnum(buf + 59, 6);
+	if (h->namelen == 0)
+		fatal("invalid cpio header: c_namesize is 0");
+	h->name = sbufalloc(&name, h->namelen, 1024);
+	if (bioread(f, h->name, h->namelen) != h->namelen) {
+		if (f->err)
+			fatal("read: %s", strerror(f->err));
+		fatal("archive truncated");
+	}
+	if (h->name[--h->namelen] != '\0')
+		fatal("invalid cpio header: name is not NUL-terminated");
+	if (strcmp(h->name, "TRAILER!!!") == 0)
+		return 0;
+
+	h->fields = PATH | MODE | UID | GID | MTIME | SIZE;
+	type = octnum(buf + 18, 6);
+	h->mode = type & 07777;
+	type &= ~07777;
+	switch (type) {
+	case C_ISDIR: h->type = DIRTYPE; break;
+	case C_ISFIFO: h->type = FIFOTYPE; break;
+	case C_ISREG: h->type = REGTYPE; break;
+	case C_ISLNK: h->type = SYMTYPE; break;
+	case C_ISBLK: h->type = BLKTYPE; break;
+	case C_ISCHR: h->type = CHRTYPE; break;
+	default: fatal("invalid cpio header: invalid or unsupported file type: %#o", type);
+	}
+	h->uid = octnum(buf + 24, 6);
+	h->gid = octnum(buf + 30, 6);
+	h->uname = "";
+	h->gname = "";
+	h->dev = octnum(buf + 42, 6);
+	h->mtime = (struct timespec){.tv_sec = octnum(buf + 48, 11)};
+	h->size = octnum(buf + 65, 11);
+	if (h->type == SYMTYPE) {
+		if (h->size > SIZE_MAX - 1)
+			fatal("symlink target is too long");
+		h->linklen = h->size;
+		h->link = sbufalloc(&link, h->linklen + 1, 1024);
+		if (bioread(f, h->link, h->linklen) != h->linklen) {
+			if (f->err)
+				fatal("read: %s", strerror(f->err));
+			fatal("archive truncated");
+		}
+		h->link[h->linklen] = '\0';
+		h->size = 0;
+		h->fields |= LINKPATH;
+	} else {
+		h->link = "";
+		h->linklen = 0;
+	}
+	end = bioin.off + h->size;
+	return 1;
+}
+
+static readfn *
+detectformat(struct bufio *f)
+{
+	size_t l, i;
+	ssize_t n;
+	char *b;
+
+	b = f->buf;
+	for (l = 0; l < 512; l += n) {
+		n = read(f->fd, b + l, 512 - l);
+		if (n < 0)
+			fatal("read:");
+		if (n == 0)
+			break;
+	}
+	f->pos = f->buf;
+	f->end = f->buf + l;
+	if (l == 512) {
+		unsigned long sum;
+
+		sum = 0;
+		for (i = 0; i < 512; ++i)
+			sum += ((unsigned char *)b)[i];
+		if (sum == 0)
+			return readpax;
+		for (i = 148; i < 156; ++i)
+			sum = (sum + ' ') - ((unsigned char *)b)[i];
+		if (sum == octnum(b + 148, 8))
+			return readpax;
+	}
+	if (l >= 76) {
+		if (memcmp(b, "070707", 6) == 0)
+			return readcpio;
+	}
+	return NULL;
 }
 
 static char *
@@ -1743,8 +1852,8 @@ main(int argc, char *argv[])
 	const char *name = NULL, *arg, *format = "pax";
 	enum mode mode = LIST;
 	struct header hdr;
-	int (*readhdr)(struct bufio *, struct header *) = readpax;
-	void (*writehdr)(FILE *, struct header *) = listhdr;
+	readfn *readhdr = NULL;
+	writefn *writehdr = listhdr;
 	size_t i;
 
 	ARGBEGIN {
@@ -1839,6 +1948,9 @@ main(int argc, char *argv[])
 			if (bioin.fd < 0)
 				fatal("open %s:", name);
 		}
+		readhdr = detectformat(&bioin);
+		if (!readhdr)
+			fatal("could not detect archive format");
 		pats = argv;
 		patslen = argc;
 		patsused = calloc(1, argc);
