@@ -373,7 +373,7 @@ copyblock(char *b, struct bufio *r, size_t nr, FILE *w, size_t nw)
 {
 	if (bioread(r, b, nr) != nr) {
 		if (r->err)
-			fatal("read: %s", strerror(errno));
+			fatal("read: %s", strerror(r->err));
 		fatal("archive truncated");
 	}
 	if (nw > nr)
@@ -553,7 +553,7 @@ readustar(struct bufio *f, struct header *h)
 	assert(bioin.off <= end);
 	if (bioskip(f, end - bioin.off) != 0 || bioread(f, buf, sizeof buf) != sizeof buf) {
 		if (f->err)
-			fatal("read: %s", strerror(errno));
+			fatal("read: %s", strerror(f->err));
 		fatal("archive truncated");
 	}
 	sum = 0;
@@ -753,7 +753,7 @@ readexthdr(struct bufio *f, struct header *h, struct exthdrbuf *b, off_t len)
 	sbufalloc(&buf, len, 8192);
 	if (bioread(f, buf.str, len) != len) {
 		if (f->err)
-			fatal("read: %s", strerror(errno));
+			fatal("read: %s", strerror(f->err));
 		fatal("archive truncated");
 	}
 	rec = buf.str;
@@ -786,7 +786,7 @@ readgnuhdr(struct bufio *f, struct strbuf *b, off_t len)
 	sbufalloc(b, len + 1, 1024);
 	if (bioread(f, b->str, len) != len) {
 		if (f->err)
-			fatal("read: %s", strerror(errno));
+			fatal("read: %s", strerror(f->err));
 		fatal("archive truncated");
 	}
 	b->str[len] = '\0';
@@ -838,7 +838,7 @@ readcpio(struct bufio *f, struct header *h)
 
 	if (bioskip(f, end - bioin.off) != 0 || bioread(f, buf, sizeof buf) != sizeof buf) {
 		if (f->err)
-			fatal("read: %s", strerror(errno));
+			fatal("read: %s", strerror(f->err));
 		fatal("archive truncated");
 	}
 	if (memcmp(buf, "070707", 6) != 0)
