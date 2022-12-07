@@ -544,7 +544,7 @@ readustar(struct bufio *f, struct header *h)
 	static char buf[512];
 	static off_t end;
 	size_t namelen, prefixlen, linklen;
-	unsigned long chksum;
+	unsigned long sum;
 	size_t i;
 	enum format format;
 
@@ -554,15 +554,15 @@ readustar(struct bufio *f, struct header *h)
 			fatal("read: %s", strerror(errno));
 		fatal("archive truncated");
 	}
-	chksum = 0;
+	sum = 0;
 	for (i = 0; i < 512; ++i)
-		chksum += ((unsigned char *)buf)[i];
-	if (chksum == 0)
+		sum += ((unsigned char *)buf)[i];
+	if (sum == 0)
 		return 0;
 	for (i = 148; i < 156; ++i)
-		chksum = (chksum + ' ') - ((unsigned char *)buf)[i];
-	if (chksum != octnum(buf + 148, 8))
-		fatal("bad checksum");
+		sum = (sum + ' ') - ((unsigned char *)buf)[i];
+	if (sum != octnum(buf + 148, 8))
+		fatal("invalid tar header: bad checksum");
 	if (memcmp(buf + 257, "ustar\0" "00", 8) == 0)
 		format = USTAR;
 	else if (memcmp(buf + 257, "ustar  ", 8) == 0)
