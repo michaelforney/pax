@@ -72,19 +72,20 @@ struct header {
 	/* keywords ignored because they were overridden by an option */
 	enum field delete;
 
+	char type;
+
 	char *name;
 	size_t namelen;
 	mode_t mode;
 	uid_t uid;
 	gid_t gid;
+	dev_t rdev;
 	off_t size;
 	struct timespec atime, mtime, ctime;
-	char type;
 	char *link;
 	size_t linklen;
 	char *uname;
 	char *gname;
-	dev_t dev;
 
 	/* tar-specific, pre-calculated split point between name and prefix */
 	char *slash;
@@ -632,7 +633,7 @@ readustar(struct bufio *f, struct header *h)
 
 			major = octnum(buf + 329, 8);
 			minor = octnum(buf + 337, 8);
-			h->dev = makedev(major, minor);
+			h->rdev = makedev(major, minor);
 		}
 	}
 
@@ -874,7 +875,7 @@ readcpio(struct bufio *f, struct header *h)
 	h->gid = octnum(buf + 30, 6);
 	h->uname = "";
 	h->gname = "";
-	h->dev = octnum(buf + 42, 6);
+	h->rdev = octnum(buf + 42, 6);
 	h->mtime = (struct timespec){.tv_sec = octnum(buf + 48, 11)};
 	h->size = octnum(buf + 65, 11);
 	if (h->type == SYMTYPE) {
@@ -1036,12 +1037,12 @@ writeustar(FILE *f, struct header *h)
 	if (strlen(h->gname) > 31)
 		fatal("group name is too long: %s\n", h->gname);
 	strncpy(buf + 297, h->gname, 32);
-	if (major(h->dev) > 07777777)
-		fatal("device major is too large: %ju\n", (uintmax_t)major(h->dev));
-	snprintf(buf + 329, 8, "%.7lo", (unsigned long)major(h->dev));
-	if (minor(h->dev) > 07777777)
-		fatal("device minor is too large: %ju\n", (uintmax_t)minor(h->dev));
-	snprintf(buf + 337, 8, "%.7lo", (unsigned long)minor(h->dev));
+	if (major(h->rdev) > 07777777)
+		fatal("device major is too large: %ju\n", (uintmax_t)major(h->rdev));
+	snprintf(buf + 329, 8, "%.7lo", (unsigned long)major(h->rdev));
+	if (minor(h->rdev) > 07777777)
+		fatal("device minor is too large: %ju\n", (uintmax_t)minor(h->rdev));
+	snprintf(buf + 337, 8, "%.7lo", (unsigned long)minor(h->rdev));
 	memset(buf + 500, 0, 12);
 	sum = 0;
 	for (i = 0; i < 512; ++i)
@@ -1317,7 +1318,7 @@ next:
 	h->gname = gidtogname(st.st_gid, "");
 	h->link = "";
 	h->linklen = 0;
-	h->dev = 0;
+	h->rdev = 0;
 	h->slash = NULL;
 	h->data = NULL;
 	h->file = name.str;
@@ -1348,11 +1349,11 @@ next:
 		break;
 	case S_IFCHR:
 		h->type = CHRTYPE;
-		h->dev = st.st_rdev;
+		h->rdev = st.st_rdev;
 		break;
 	case S_IFBLK:
 		h->type = BLKTYPE;
-		h->dev = st.st_rdev;
+		h->rdev = st.st_rdev;
 		break;
 	case S_IFDIR:
 		h->type = DIRTYPE;
@@ -1505,7 +1506,7 @@ listhdr(FILE *f, struct header *h)
 		fatal("localtime:");
 	strftime(time, sizeof time, timefmt, tm);
 	if (h->type == CHRTYPE || h->type == BLKTYPE)
-		snprintf(info, sizeof info, "%u, %u", major(h->dev), minor(h->dev));
+		snprintf(info, sizeof info, "%u, %u", major(h->rdev), minor(h->rdev));
 	else
 		snprintf(info, sizeof info, "%ju", (uintmax_t)h->size);
 	printf("%s %2d %-8s %-8s %9s %s %s", mode, 1, uname, gname, info, time, h->name);
@@ -1597,7 +1598,7 @@ writefile(FILE *unused, struct header *h)
 	case CHRTYPE:
 	case BLKTYPE:
 		mode |= h->type == CHRTYPE ? S_IFCHR : S_IFBLK;
-		if (mknodat(destfd, h->name, mode, h->dev) != 0) {
+		if (mknodat(destfd, h->name, mode, h->rdev) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
 			fatal("mknod %s%s:", dest, h->name);
