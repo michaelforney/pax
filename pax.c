@@ -1566,7 +1566,8 @@ listhdr(FILE *f, struct header *h)
 		snprintf(gnamebuf, sizeof gnamebuf, "%ju", (uintmax_t)h->gid);
 		gname = gnamebuf;
 	}
-	timefmt = h->mtime.tv_sec + 15780000 < curtime ? "%b %e  %Y" : "%b %e %H:%M";
+	timefmt = h->mtime.tv_sec + 15780000 < curtime || h->mtime.tv_sec > curtime
+		? "%b %e  %Y" : "%b %e %H:%M";
 	tm = localtime(&h->mtime.tv_sec);
 	if (!tm)
 		fatal("localtime:");
