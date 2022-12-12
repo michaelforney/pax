@@ -1385,6 +1385,8 @@ next:
 		fatal("stat %s:", name.str);
 	if (Xflag && dev && st.st_dev != dev)
 		goto next;
+	if (S_ISDIR(st.st_mode) && name.str[name.len - 1] != '/')
+		sbufcat(&name, "/", 1, 1024);
 	h->fields = PATH | UID | GID | ATIME | MTIME | CTIME;
 	h->name = name.str;
 	h->namelen = name.len;
@@ -1441,8 +1443,6 @@ next:
 		break;
 	case S_IFDIR:
 		h->type = DIRTYPE;
-		if (name.str[name.len - 1] != '/')
-			sbufcat(&name, "/", 1, 1024);
 		dir = opendir(name.str);
 		if (!dir)
 			fatal("opendir %s:", name.str);
