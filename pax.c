@@ -1246,10 +1246,12 @@ writecpio(FILE *f, struct header *h)
 {
 	char buf[77];
 	unsigned long mode;
-	unsigned long long size;
+	uintmax_t size;
+	size_t namelen;
+	int len;
 
-	memcpy(buf, "070707", 6);
 	if (!h) {
+		memcpy(buf, "070707", 6);
 		memset(buf + 6, '0', 70);
 		memcpy(buf + 59, "000013", 6);
 		if (fwrite(buf, 1, 76, f) != 76)
@@ -1260,7 +1262,6 @@ writecpio(FILE *f, struct header *h)
 	}
 	if (vflag)
 		fprintf(stderr, "%s\n", h->name);
-	memset(buf + 6, '0', 12);
 	mode = h->mode;
 	switch (h->type) {
 	case DIRTYPE: mode |= S_IFDIR; break;
@@ -1271,18 +1272,37 @@ writecpio(FILE *f, struct header *h)
 	case CHRTYPE: mode |= S_IFCHR; break;
 	default: fatal("unknown or unsupported header type");
 	}
-	snprintf(buf + 18, 7, "%.6lo", mode);
-	snprintf(buf + 24, 7, "%.6lo", (unsigned long)h->uid);
-	snprintf(buf + 30, 7, "%.6lo", (unsigned long)h->gid);
-	snprintf(buf + 36, 7, "%.6o", 1);
-	snprintf(buf + 42, 7, "%.6lo", (unsigned long)h->rdev);
-	snprintf(buf + 48, 12, "%.11llo", (unsigned long long)h->mtime.tv_sec);
-	snprintf(buf + 59, 7, "%.6lo", h->namelen + 1);
+	if (h->dev > 0777777)
+		fatal("device is too large: %ju", (uintmax_t)h->dev);
+	if (mode > 0777777)
+		fatal("mode is too large: %lu", mode);
+	if (h->uid > MAXUGID)
+		fatal("uid is too large: %ju", (uintmax_t)h->uid);
+	if (h->gid > MAXUGID)
+		fatal("gid is too large: %ju", (uintmax_t)h->gid);
+	if (h->nlink > 0777777)
+		fatal("nlink is too large: %ju", (uintmax_t)h->nlink);
+	if (h->rdev > 0777777)
+		fatal("device is too large: %ju", (uintmax_t)h->rdev);
+	if (h->mtime.tv_sec > MAXTIME)
+		fatal("mtime is too large: %ju", (uintmax_t)h->mtime.tv_sec);
+	namelen = h->namelen;
+	if (namelen > 0 && h->name[namelen - 1] == '/')
+		--namelen;
+	if (namelen > 077777777777 - 1)
+		fatal("path is too large: %ju", (uintmax_t)h->namelen + 1);
 	size = h->type == SYMTYPE ? h->linklen : h->size;
-	snprintf(buf + 65, 12, "%.11llo", size);
+	if (size > MAXSIZE)
+		fatal("size is too large: %ju", h->size);
+	len = snprintf(buf, 100, "070707%.6lo%.6lo%.6lo%.6lo%.6lo%.6lo%.6lo%.11llo%.6lo%.11jo",
+		(unsigned long)h->dev, 0ul, mode,
+		(unsigned long)h->uid, (unsigned long)h->gid,
+		(unsigned long)h->nlink, (unsigned long)h->rdev,
+		(unsigned long long)h->mtime.tv_sec, (unsigned long)namelen + 1, size);
+	assert(len == 76);
 	if (fwrite(buf, 1, 76, f) != 76)
 		fatal("write:");
-	if (fwrite(h->name, 1, h->namelen + 1, f) != h->namelen + 1)
+	if (fwrite(h->name, 1, namelen, f) != namelen || fputc('\0', f) == EOF)
 		fatal("write:");
 	switch (h->type) {
 	case SYMTYPE:
