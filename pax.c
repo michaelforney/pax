@@ -1894,7 +1894,7 @@ applyrepl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
 		if (!r->global)
 			break;
 	}
-	if (p == old)
+	if (flags == 0)
 		return 0;
 	sbufcat(b, p, oldlen - (p - old), 1024);
 	if (r->print)
