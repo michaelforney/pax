@@ -79,8 +79,8 @@ struct header {
 
 	char type;
 
-	char *name;
-	size_t namelen;
+	char *path;
+	size_t pathlen;
 	dev_t dev;
 	ino_t ino;
 	mode_t mode;
@@ -582,11 +582,11 @@ readustar(struct bufio *f, struct header *h)
 			sbufcat(&h->pathbuf, "/", 1, 1024);
 		}
 		sbufcat(&h->pathbuf, buf, namelen, 1024);
-		h->name = h->pathbuf.str;
-		h->namelen = h->pathbuf.len;
+		h->path = h->pathbuf.str;
+		h->pathlen = h->pathbuf.len;
 	} else {
-		h->name = buf;
-		h->namelen = namelen;
+		h->path = buf;
+		h->pathlen = namelen;
 	}
 	h->mode = octnum(buf + 100, 8);
 	h->uid = octnum(buf + 108, 8);
@@ -712,8 +712,8 @@ extkeyval(struct header *h, const char *key, const char *val, size_t vallen)
 	case PATH:
 		h->pathbuf.len = 0;
 		sbufcat(&h->pathbuf, val, vallen, 1024);
-		h->name = h->pathbuf.str;
-		h->namelen = h->pathbuf.len;
+		h->path = h->pathbuf.str;
+		h->pathlen = h->pathbuf.len;
 		break;
 	case SIZE:
 		h->size = decnum(val, vallen, &end);
@@ -805,8 +805,8 @@ readpax(struct bufio *f, struct header *h)
 			if ((exthdr.delete | opt.delete) & PATH)
 				break;
 			readgnuhdr(f, &exthdr.pathbuf, h->size);
-			exthdr.name = exthdr.pathbuf.str;
-			exthdr.namelen = exthdr.pathbuf.len;
+			exthdr.path = exthdr.pathbuf.str;
+			exthdr.pathlen = exthdr.pathbuf.len;
 			exthdr.fields |= PATH;
 			break;
 		case 'K':
@@ -838,20 +838,20 @@ readcpio(struct bufio *f, struct header *h)
 	}
 	if (memcmp(buf, "070707", 6) != 0)
 		fatal("invalid cpio header: bad magic");
-	h->namelen = octnum(buf + 59, 6);
-	if (h->namelen == 0)
+	h->pathlen = octnum(buf + 59, 6);
+	if (h->pathlen == 0)
 		fatal("invalid cpio header: c_namesize is 0");
 	h->pathbuf.len = 0;
-	sbufalloc(&h->pathbuf, h->namelen, 1024);
-	h->name = h->pathbuf.str;
-	if (bioread(f, h->name, h->namelen) != h->namelen) {
+	sbufalloc(&h->pathbuf, h->pathlen, 1024);
+	h->path = h->pathbuf.str;
+	if (bioread(f, h->path, h->pathlen) != h->pathlen) {
 		if (f->err)
 			fatal("read: %s", strerror(f->err));
 		fatal("archive truncated");
 	}
-	if (h->name[--h->namelen] != '\0')
+	if (h->path[--h->pathlen] != '\0')
 		fatal("invalid cpio header: name is not NUL-terminated");
-	if (strcmp(h->name, "TRAILER!!!") == 0)
+	if (strcmp(h->path, "TRAILER!!!") == 0)
 		return 0;
 
 	h->fields = PATH | MODE | UID | GID | MTIME | SIZE;
@@ -996,17 +996,17 @@ writeustar(FILE *f, struct header *h)
 		return;
 	}
 	slash = h->slash;
-	if (!slash && h->namelen > 100) {
-		slash = splitname(h->name, h->namelen);
+	if (!slash && h->pathlen > 100) {
+		slash = splitname(h->path, h->pathlen);
 		if (!slash)
-			fatal("file name is too long: %s\n", h->name);
+			fatal("path is too long: %s\n", h->path);
 	}
 	if (slash) {
 		*slash = '\0';
 		strncpy(buf, slash + 1, 100);
-		strncpy(buf + 345, h->name, 155);
+		strncpy(buf + 345, h->path, 155);
 	} else {
-		strncpy(buf, h->name, 100);
+		strncpy(buf, h->path, 100);
 		memset(buf + 345, 0, 155);
 	}
 	if (h->mode < 0 || h->mode > 07777777)
@@ -1107,7 +1107,7 @@ writeexthdr(FILE *f, int type, struct header *h)
 
 	ext.len = 0;
 	if (h->fields & PATH)
-		writerec(&ext, "path=%s", h->name);
+		writerec(&ext, "path=%s", h->path);
 	if (h->fields & UID)
 		writerec(&ext, "uid=%ju", (uintmax_t)h->uid);
 	if (h->fields & GID)
@@ -1126,8 +1126,8 @@ writeexthdr(FILE *f, int type, struct header *h)
 		writerec(&ext, "gname=%s", h->gname);
 	if (ext.len > 0) {
 		memset(&exthdr, 0, sizeof exthdr);
-		exthdr.name = "pax_extended_header";
-		exthdr.namelen = 20;
+		exthdr.path = "pax_extended_header";
+		exthdr.pathlen = 20;
 		exthdr.mode = 0600;
 		exthdr.link = "";
 		exthdr.uname = "";
@@ -1144,8 +1144,8 @@ mergehdr(struct header *dst, struct header *src, enum field fields)
 {
 	fields &= src->fields;
 	if (fields & PATH) {
-		dst->name = src->name;
-		dst->namelen = src->namelen;
+		dst->path = src->path;
+		dst->pathlen = src->pathlen;
 	}
 	if (fields & UID)
 		dst->uid = src->uid;
@@ -1180,10 +1180,10 @@ writepax(FILE *f, struct header *h)
 		return;
 	}
 	if (vflag)
-		fprintf(stderr, "%s\n", h->name);
+		fprintf(stderr, "%s\n", h->path);
 	fields = 0;
-	if (h->namelen > 100) {
-		h->slash = splitname(h->name, h->namelen);
+	if (h->pathlen > 100) {
+		h->slash = splitname(h->path, h->pathlen);
 		if (!h->slash)
 			fields |= PATH;
 	}
@@ -1209,7 +1209,7 @@ writepax(FILE *f, struct header *h)
 
 	/* reset fields merged into extended header */
 	if (fields & PATH)
-		h->name = "", h->namelen = 0;
+		h->path = "", h->pathlen = 0;
 	if (fields & UID)
 		h->uid = 0;
 	if (fields & GID)
@@ -1248,7 +1248,7 @@ writecpio(FILE *f, struct header *h)
 	char buf[77];
 	unsigned long mode;
 	uintmax_t size;
-	size_t namelen;
+	size_t namesize;
 	int len;
 
 	if (!h) {
@@ -1262,7 +1262,7 @@ writecpio(FILE *f, struct header *h)
 		return;
 	}
 	if (vflag)
-		fprintf(stderr, "%s\n", h->name);
+		fprintf(stderr, "%s\n", h->path);
 	mode = h->mode;
 	switch (h->type) {
 	case DIRTYPE: mode |= S_IFDIR; break;
@@ -1289,11 +1289,11 @@ writecpio(FILE *f, struct header *h)
 		fatal("device is too large: %ju", (uintmax_t)h->rdev);
 	if (h->mtime.tv_sec > MAXTIME)
 		fatal("mtime is too large: %ju", (uintmax_t)h->mtime.tv_sec);
-	namelen = h->namelen;
-	if (namelen > 0 && h->name[namelen - 1] == '/')
-		--namelen;
-	if (namelen > 077777777777 - 1)
-		fatal("path is too large: %ju", (uintmax_t)h->namelen + 1);
+	namesize = h->pathlen;
+	if (namesize > 0 && h->path[namesize - 1] == '/')
+		--namesize;
+	if (namesize > 077777777777 - 1)
+		fatal("path is too large: %ju", (uintmax_t)h->pathlen + 1);
 	size = h->type == SYMTYPE ? h->linklen : h->size;
 	if (size > MAXSIZE)
 		fatal("size is too large: %ju", h->size);
@@ -1301,11 +1301,11 @@ writecpio(FILE *f, struct header *h)
 		(unsigned long)h->dev, ino, mode,
 		(unsigned long)h->uid, (unsigned long)h->gid,
 		(unsigned long)h->nlink, (unsigned long)h->rdev,
-		(unsigned long long)h->mtime.tv_sec, (unsigned long)namelen + 1, size);
+		(unsigned long long)h->mtime.tv_sec, (unsigned long)namesize + 1, size);
 	assert(len == 76);
 	if (fwrite(buf, 1, 76, f) != 76)
 		fatal("write:");
-	if (fwrite(h->name, 1, namelen, f) != namelen || fputc('\0', f) == EOF)
+	if (fwrite(h->path, 1, namesize, f) != namesize || fputc('\0', f) == EOF)
 		fatal("write:");
 	switch (h->type) {
 	case SYMTYPE:
@@ -1344,7 +1344,7 @@ static int
 readfile(struct bufio *f, struct header *h)
 {
 	/* use our own path buffer, since we use it for traversal */
-	static struct strbuf name;
+	static struct strbuf path;
 	struct stat st;
 	int flag;
 	DIR *dir;
@@ -1359,9 +1359,9 @@ next:
 
 		f = files.pending;
 		files.pending = f->next;
-		assert(f->pathlen <= name.len);
-		name.len = f->pathlen;
-		sbufcat(&name, f->name, f->namelen, 1024);
+		assert(f->pathlen <= path.len);
+		path.len = f->pathlen;
+		sbufcat(&path, f->name, f->namelen, 1024);
 		if (follow == 'H' && f->pathlen > 0)
 			flag &= ~AT_SYMLINK_NOFOLLOW;
 		dev = f->dev;
@@ -1369,27 +1369,27 @@ next:
 	} else {
 		if (!files.input)
 			return 0;
-		ret = getline(&name.str, &name.cap, files.input);
+		ret = getline(&path.str, &path.cap, files.input);
 		if (ret < 0) {
 			if (ferror(files.input))
 				fatal("getline:");
 			return 0;
 		}
-		if (ret > 0 && name.str[ret - 1] == '\n')
-			name.str[--ret] = '\0';
-		name.len = ret;
+		if (ret > 0 && path.str[ret - 1] == '\n')
+			path.str[--ret] = '\0';
+		path.len = ret;
 		dev = 0;
 	}
 
-	if (fstatat(AT_FDCWD, name.str, &st, flag) != 0)
-		fatal("stat %s:", name.str);
+	if (fstatat(AT_FDCWD, path.str, &st, flag) != 0)
+		fatal("stat %s:", path.str);
 	if (Xflag && dev && st.st_dev != dev)
 		goto next;
-	if (S_ISDIR(st.st_mode) && name.str[name.len - 1] != '/')
-		sbufcat(&name, "/", 1, 1024);
+	if (S_ISDIR(st.st_mode) && path.str[path.len - 1] != '/')
+		sbufcat(&path, "/", 1, 1024);
 	h->fields = PATH | UID | GID | ATIME | MTIME | CTIME;
-	h->name = name.str;
-	h->namelen = name.len;
+	h->path = path.str;
+	h->pathlen = path.len;
 	h->dev = st.st_dev;
 	h->ino = st.st_ino;
 	h->mode = st.st_mode & ~S_IFMT;
@@ -1407,7 +1407,7 @@ next:
 	h->linklen = 0;
 	h->slash = NULL;
 	h->data = NULL;
-	h->file = name.str;
+	h->file = h->path;
 	h->flag = flag;
 	switch (st.st_mode & S_IFMT) {
 	case S_IFREG:
@@ -1419,9 +1419,9 @@ next:
 		h->linkbuf.len = 0;
 		sbufalloc(&h->linkbuf, 1024, 1024);
 		for (;;) {
-			ret = readlink(name.str, h->linkbuf.str, h->linkbuf.cap - 1);
+			ret = readlink(h->path, h->linkbuf.str, h->linkbuf.cap - 1);
 			if (ret < 0)
-				fatal("readlink %s:", name.str);
+				fatal("readlink %s:", h->path);
 			if (ret < h->linkbuf.cap)
 				break;
 			if (h->linkbuf.cap > SSIZE_MAX / 2)
@@ -1443,9 +1443,9 @@ next:
 		break;
 	case S_IFDIR:
 		h->type = DIRTYPE;
-		dir = opendir(name.str);
+		dir = opendir(h->path);
 		if (!dir)
-			fatal("opendir %s:", name.str);
+			fatal("opendir %s:", h->path);
 		for (;;) {
 			errno = 0;
 			d = readdir(dir);
@@ -1453,10 +1453,10 @@ next:
 				break;
 			if (strcmp(d->d_name, ".") == 0 || strcmp(d->d_name, "..") == 0)
 				continue;
-			filepush(&files, d->d_name, name.len, st.st_dev);
+			filepush(&files, d->d_name, path.len, st.st_dev);
 		}
 		if (errno != 0)
-			fatal("readdir %s:", name.str);
+			fatal("readdir %s:", h->path);
 		closedir(dir);
 		break;
 	case S_IFIFO:
@@ -1550,7 +1550,7 @@ listhdr(FILE *f, struct header *h)
 	if (opt.listopt)
 		fatal("listopt is not supported");
 	if (!vflag) {
-		printf("%s\n", h->name);
+		printf("%s\n", h->path);
 		return;
 	}
 	memset(mode, '-', sizeof mode - 1);
@@ -1594,7 +1594,7 @@ listhdr(FILE *f, struct header *h)
 		snprintf(info, sizeof info, "%u, %u", major(h->rdev), minor(h->rdev));
 	else
 		snprintf(info, sizeof info, "%ju", (uintmax_t)h->size);
-	printf("%s %2d %-8s %-8s %9s %s %s", mode, 1, uname, gname, info, time, h->name);
+	printf("%s %2d %-8s %-8s %9s %s %s", mode, 1, uname, gname, info, time, h->path);
 	switch (h->type) {
 	case LNKTYPE: printf(" == %s", h->link); break;
 	case SYMTYPE: printf(" -> %s", h->link); break;
@@ -1629,22 +1629,22 @@ writefile(FILE *unused, struct header *h)
 
 	if (!h)
 		return;
-	if (uflag && fstatat(destfd, h->name, &st, 0) == 0) {
+	if (uflag && fstatat(destfd, h->path, &st, 0) == 0) {
 		if (h->mtime.tv_sec < st.st_mtime || (h->mtime.tv_sec == st.st_mtime
 		 && h->mtime.tv_nsec < st.st_mtim.tv_nsec))
 			return;
 	}
 	if (vflag)
-		fprintf(stderr, "%s\n", h->name);
+		fprintf(stderr, "%s\n", h->path);
 	if (lflag && h->file && h->type != DIRTYPE) {
-		if (linkat(AT_FDCWD, h->file, destfd, h->name, h->flag) == 0)
+		if (linkat(AT_FDCWD, h->file, destfd, h->path, h->flag) == 0)
 			return;
 	}
 	retry = 1;
 	if (0) {
 	retry:
 		retry = 0;
-		mkdirp(h->name, h->namelen);
+		mkdirp(h->path, h->pathlen);
 	}
 	mode = h->mode & ~(S_ISUID | S_ISGID);
 	switch (h->type) {
@@ -1652,65 +1652,65 @@ writefile(FILE *unused, struct header *h)
 		flags = O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC;
 		if (kflag)
 			flags |= O_EXCL;
-		fd = openat(destfd, h->name, flags, mode);
+		fd = openat(destfd, h->path, flags, mode);
 		if (fd < 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
-			fatal("open %s%s:", dest, h->name);
+			fatal("open %s%s:", dest, h->path);
 		}
 		f = fdopen(fd, "w");
 		if (!f)
-			fatal("open %s:", h->name);
+			fatal("open %s:", h->path);
 		openfile(h);
 		copy(&bioin, h->size, f, h->size);
 		closefile(h);
 		fclose(f);
 		break;
 	case LNKTYPE:
-		if (linkat(destfd, h->link, destfd, h->name, 0) != 0) {
+		if (linkat(destfd, h->link, destfd, h->path, 0) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
-			fatal("link %s%s:", dest, h->name);
+			fatal("link %s%s:", dest, h->path);
 		}
 		break;
 	case SYMTYPE:
-		if (symlinkat(h->link, destfd, h->name) != 0) {
+		if (symlinkat(h->link, destfd, h->path) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
-			fatal("symlink %s%s:", dest, h->name);
+			fatal("symlink %s%s:", dest, h->path);
 		}
 		break;
 	case CHRTYPE:
 	case BLKTYPE:
 		mode |= h->type == CHRTYPE ? S_IFCHR : S_IFBLK;
-		if (mknodat(destfd, h->name, mode, h->rdev) != 0) {
+		if (mknodat(destfd, h->path, mode, h->rdev) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
-			fatal("mknod %s%s:", dest, h->name);
+			fatal("mknod %s%s:", dest, h->path);
 		}
 		break;
 	case DIRTYPE:
-		if (mkdirat(destfd, h->name, mode) != 0) {
+		if (mkdirat(destfd, h->path, mode) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
 			if (errno == EEXIST) {
-				if (fstatat(destfd, h->name, &st, 0) == 0 && S_ISDIR(st.st_mode))
+				if (fstatat(destfd, h->path, &st, 0) == 0 && S_ISDIR(st.st_mode))
 					break;
 				errno = EEXIST;
 			}
-			fatal("mkdir %s%s:", dest, h->name);
+			fatal("mkdir %s%s:", dest, h->path);
 		}
 		break;
 	case FIFOTYPE:
-		if (mkfifoat(destfd, h->name, mode) != 0) {
+		if (mkfifoat(destfd, h->path, mode) != 0) {
 			if (retry && errno == ENOENT)
 				goto retry;
 			if (errno == EEXIST) {
-				if (fstatat(destfd, h->name, &st, 0) == 0 && S_ISFIFO(st.st_mode))
+				if (fstatat(destfd, h->path, &st, 0) == 0 && S_ISFIFO(st.st_mode))
 					break;
 				errno = EEXIST;
 			}
-			fatal("mkfifo %s%s:", dest, h->name);
+			fatal("mkfifo %s%s:", dest, h->path);
 		}
 		break;
 	}
@@ -1719,8 +1719,8 @@ writefile(FILE *unused, struct header *h)
 
 		ts[0] = preserve & ATIME ? h->atime : (struct timespec){.tv_nsec = UTIME_OMIT};
 		ts[1] = preserve & MTIME ? h->mtime : (struct timespec){.tv_nsec = UTIME_OMIT};
-		if (utimensat(destfd, h->name, ts, 0) != 0) {
-			fprintf(stderr, "utimens %s%s: %s\n", dest, h->name, strerror(errno));
+		if (utimensat(destfd, h->path, ts, 0) != 0) {
+			fprintf(stderr, "utimens %s%s: %s\n", dest, h->path, strerror(errno));
 			exitstatus = 1;
 		}
 	}
@@ -1730,8 +1730,8 @@ writefile(FILE *unused, struct header *h)
 
 		uid = preserve & UID ? unametouid(h->uname, h->uid) : -1;
 		gid = preserve & GID ? gnametogid(h->gname, h->gid) : -1;
-		if (fchownat(destfd, h->name, uid, gid, 0) != 0) {
-			fprintf(stderr, "chown %s%s: %s\n", dest, h->name, strerror(errno));
+		if (fchownat(destfd, h->path, uid, gid, 0) != 0) {
+			fprintf(stderr, "chown %s%s: %s\n", dest, h->path, strerror(errno));
 			exitstatus = 1;
 		} else {
 			/* add back setuid/setgid bits if we preserved the uid/gid */
@@ -1739,8 +1739,8 @@ writefile(FILE *unused, struct header *h)
 		}
 	}
 	if (preserve & MODE) {
-		if (fchmodat(destfd, h->name, mode, 0) != 0) {
-			fprintf(stderr, "chmod %s%s: %s\n", dest, h->name, strerror(errno));
+		if (fchmodat(destfd, h->path, mode, 0) != 0) {
+			fprintf(stderr, "chmod %s%s: %s\n", dest, h->path, strerror(errno));
 			exitstatus = 1;
 		}
 	}
@@ -1750,8 +1750,8 @@ static int
 match(struct header *h)
 {
 	static struct dir {
-		char *name;
-		size_t namelen;
+		char *path;
+		size_t pathlen;
 	} *dirs;
 	static size_t dirslen;
 	size_t i;
@@ -1760,14 +1760,14 @@ match(struct header *h)
 		return 1;
 	if (!dflag) {
 		for (i = 0; i < dirslen; ++i) {
-			if (h->namelen >= dirs[i].namelen && memcmp(h->name, dirs[i].name, dirs[i].namelen) == 0)
+			if (h->pathlen >= dirs[i].pathlen && memcmp(h->path, dirs[i].path, dirs[i].pathlen) == 0)
 				return !cflag;
 		}
 	}
 	for (i = 0; i < patslen; ++i) {
 		if (nflag && patsused[i])
 			continue;
-		switch (fnmatch(pats[i], h->name, FNM_PATHNAME | FNM_PERIOD)) {
+		switch (fnmatch(pats[i], h->path, FNM_PATHNAME | FNM_PERIOD)) {
 		case 0:
 			patsused[i] = 1;
 			if (!dflag && h->type == DIRTYPE) {
@@ -1779,14 +1779,14 @@ match(struct header *h)
 						fatal(NULL);
 				}
 				d = &dirs[dirslen++];
-				d->namelen = h->namelen;
-				d->name = malloc(d->namelen + 1);
-				if (!d->name)
+				d->pathlen = h->pathlen;
+				d->path = malloc(d->pathlen + 1);
+				if (!d->path)
 					fatal(NULL);
-				memcpy(d->name, h->name, h->namelen);
+				memcpy(d->path, h->path, h->pathlen);
 				/* add trailing slash if not already present */
-				if (d->name[d->namelen - 1] != '/')
-					d->name[d->namelen++] = '/';
+				if (d->path[d->pathlen - 1] != '/')
+					d->path[d->pathlen++] = '/';
 			}
 			return !cflag;
 		case FNM_NOMATCH:
@@ -1905,13 +1905,13 @@ applyrepl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
 static void
 replace(struct header *h)
 {
-	static struct strbuf name, link;
+	static struct strbuf path, link;
 	struct replstr *r;
 
 	for (r = replstr; r; r = r->next) {
-		if (applyrepl(r, &name, h->name, h->namelen)) {
-			h->name = name.str;
-			h->namelen = name.len;
+		if (applyrepl(r, &path, h->path, h->pathlen)) {
+			h->path = path.str;
+			h->pathlen = path.len;
 			break;
 		}
 	}
