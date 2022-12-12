@@ -1244,6 +1244,7 @@ writepax(FILE *f, struct header *h)
 static void
 writecpio(FILE *f, struct header *h)
 {
+	static unsigned long ino;
 	char buf[77];
 	unsigned long mode;
 	uintmax_t size;
@@ -1274,6 +1275,8 @@ writecpio(FILE *f, struct header *h)
 	}
 	if (h->dev > 0777777)
 		fatal("device is too large: %ju", (uintmax_t)h->dev);
+	if (++ino > 0777777)
+		fatal("inode is too large: %lu", ino);
 	if (mode > 0777777)
 		fatal("mode is too large: %lu", mode);
 	if (h->uid > MAXUGID)
@@ -1295,7 +1298,7 @@ writecpio(FILE *f, struct header *h)
 	if (size > MAXSIZE)
 		fatal("size is too large: %ju", h->size);
 	len = snprintf(buf, 100, "070707%.6lo%.6lo%.6lo%.6lo%.6lo%.6lo%.6lo%.11llo%.6lo%.11jo",
-		(unsigned long)h->dev, 0ul, mode,
+		(unsigned long)h->dev, ino, mode,
 		(unsigned long)h->uid, (unsigned long)h->gid,
 		(unsigned long)h->nlink, (unsigned long)h->rdev,
 		(unsigned long long)h->mtime.tv_sec, (unsigned long)namelen + 1, size);
