@@ -66,6 +66,11 @@ struct keyword {
 	enum field field;
 };
 
+struct strbuf {
+	char *str;
+	size_t len, cap;
+};
+
 struct header {
 	/* keywords present in this header */
 	enum field fields;
@@ -90,6 +95,11 @@ struct header {
 	char *uname;
 	char *gname;
 
+	struct strbuf pathbuf;
+	struct strbuf linkbuf;
+	struct strbuf unamebuf;
+	struct strbuf gnamebuf;
+
 	/* tar-specific, pre-calculated split point between name and prefix */
 	char *slash;
 	/* read this data instead of stdin */
@@ -111,18 +121,6 @@ struct bufio {
 	off_t off;
 	char buf[64 * 1024];
 	char *pos, *end;
-};
-
-struct strbuf {
-	char *str;
-	size_t len, cap;
-};
-
-struct exthdrbuf {
-	struct strbuf path;
-	struct strbuf linkpath;
-	struct strbuf uname;
-	struct strbuf gname;
 };
 
 struct replstr {
@@ -183,7 +181,6 @@ static struct {
 	int times;
 } opt;
 static struct header exthdr, globexthdr;
-static struct exthdrbuf exthdrbuf, globexthdrbuf;
 static struct replstr *replstr;
 static time_t curtime;
 static struct account *accts;
@@ -579,21 +576,18 @@ readustar(struct bufio *f, struct header *h)
 	namelen = strnlen(buf, 100);
 	prefixlen = format == USTAR ? strnlen(buf + 345, 155) : 0;
 	if (namelen == 100 || prefixlen > 0) {
-		static char namebuf[257];
-
+		h->pathbuf.len = 0;
 		if (prefixlen > 0) {
-			memcpy(namebuf, buf + 345, prefixlen);
-			namebuf[prefixlen] = '/';
-			++prefixlen;
+			sbufcat(&h->pathbuf, buf + 345, prefixlen, 1024);
+			sbufcat(&h->pathbuf, "/", 1, 1024);
 		}
-		memcpy(namebuf + prefixlen, buf, namelen);
-		namebuf[prefixlen + namelen] = '\0';
-		namelen += prefixlen;
-		h->name = namebuf;
+		sbufcat(&h->pathbuf, buf, namelen, 1024);
+		h->name = h->pathbuf.str;
+		h->namelen = h->pathbuf.len;
 	} else {
 		h->name = buf;
+		h->namelen = namelen;
 	}
-	h->namelen = namelen;
 	h->mode = octnum(buf + 100, 8);
 	h->uid = octnum(buf + 108, 8);
 	h->gid = octnum(buf + 116, 8);
@@ -613,12 +607,10 @@ readustar(struct bufio *f, struct header *h)
 	if (linklen > 0)
 		h->fields |= LINKPATH;
 	if (linklen == 100) {
-		static char linkbuf[101];
-
-		memcpy(linkbuf, buf + 157, 100);
-		linkbuf[100] = '\0';
-		h->link = linkbuf;
-		h->linklen = linklen;
+		h->linkbuf.len = 0;
+		sbufcat(&h->linkbuf, buf + 157, 100, 1024);
+		h->link = h->linkbuf.str;
+		h->linklen = h->linkbuf.len;
 	} else {
 		h->link = buf + 157;
 	}
@@ -664,7 +656,7 @@ parsetime(struct timespec *ts, const char *field, const char *str, size_t len)
 }
 
 static void
-extkeyval(struct header *h, struct exthdrbuf *b, const char *key, const char *val, size_t vallen)
+extkeyval(struct header *h, const char *key, const char *val, size_t vallen)
 {
 	enum field field;
 	char *end;
@@ -704,24 +696,24 @@ extkeyval(struct header *h, struct exthdrbuf *b, const char *key, const char *va
 			fatal("invalid extended header: bad gid");
 		break;
 	case GNAME:
-		b->gname.len = 0;
-		sbufcat(&b->gname, val, vallen, 256);
-		h->gname = b->gname.str;
+		h->gnamebuf.len = 0;
+		sbufcat(&h->gnamebuf, val, vallen, 256);
+		h->gname = h->gnamebuf.str;
 		break;
 	case LINKPATH:
-		b->linkpath.len = 0;
-		sbufcat(&b->linkpath, val, vallen, 1024);
-		h->link = b->linkpath.str;
-		h->linklen = b->linkpath.len;
+		h->linkbuf.len = 0;
+		sbufcat(&h->linkbuf, val, vallen, 1024);
+		h->link = h->linkbuf.str;
+		h->linklen = h->linkbuf.len;
 		break;
 	case MTIME:
 		parsetime(&h->mtime, "mtime", val, vallen);
 		break;
 	case PATH:
-		b->path.len = 0;
-		sbufcat(&b->path, val, vallen, 1024);
-		h->name = b->path.str;
-		h->namelen = b->path.len;
+		h->pathbuf.len = 0;
+		sbufcat(&h->pathbuf, val, vallen, 1024);
+		h->name = h->pathbuf.str;
+		h->namelen = h->pathbuf.len;
 		break;
 	case SIZE:
 		h->size = decnum(val, vallen, &end);
@@ -734,9 +726,9 @@ extkeyval(struct header *h, struct exthdrbuf *b, const char *key, const char *va
 			fatal("invalid extended header: bad uid");
 		break;
 	case UNAME:
-		b->uname.len = 0;
-		sbufcat(&b->uname, val, vallen, 256);
-		h->uname = b->uname.str;
+		h->unamebuf.len = 0;
+		sbufcat(&h->unamebuf, val, vallen, 256);
+		h->uname = h->unamebuf.str;
 		break;
 	default:
 		return;
@@ -745,7 +737,7 @@ extkeyval(struct header *h, struct exthdrbuf *b, const char *key, const char *va
 }
 
 static void
-readexthdr(struct bufio *f, struct header *h, struct exthdrbuf *b, off_t len)
+readexthdr(struct bufio *f, struct header *h, off_t len)
 {
 	static struct strbuf buf;
 	size_t reclen, vallen;
@@ -775,7 +767,7 @@ readexthdr(struct bufio *f, struct header *h, struct exthdrbuf *b, off_t len)
 			fatal("invalid extended header: record has no '='");
 		*val++ = '\0';
 		vallen = end - val;
-		extkeyval(h, b, key, val, vallen);
+		extkeyval(h, key, val, vallen);
 		len -= reclen;
 		rec += reclen;
 	}
@@ -804,25 +796,25 @@ readpax(struct bufio *f, struct header *h)
 	while (readustar(f, h)) {
 		switch (h->type) {
 		case 'g':
-			readexthdr(f, &globexthdr, &globexthdrbuf, h->size);
+			readexthdr(f, &globexthdr, h->size);
 			break;
 		case 'x':
-			readexthdr(f, &exthdr, &exthdrbuf, h->size);
+			readexthdr(f, &exthdr, h->size);
 			break;
 		case 'L':
 			if ((exthdr.delete | opt.delete) & PATH)
 				break;
-			readgnuhdr(f, &exthdrbuf.path, h->size);
-			exthdr.name = exthdrbuf.path.str;
-			exthdr.namelen = exthdrbuf.path.len;
+			readgnuhdr(f, &exthdr.pathbuf, h->size);
+			exthdr.name = exthdr.pathbuf.str;
+			exthdr.namelen = exthdr.pathbuf.len;
 			exthdr.fields |= PATH;
 			break;
 		case 'K':
 			if ((exthdr.delete | opt.delete) & LINKPATH)
 				break;
-			readgnuhdr(f, &exthdrbuf.linkpath, h->size);
-			exthdr.link = exthdrbuf.linkpath.str;
-			exthdr.linklen = exthdrbuf.linkpath.len;
+			readgnuhdr(f, &exthdr.linkbuf, h->size);
+			exthdr.link = exthdr.linkbuf.str;
+			exthdr.linklen = exthdr.linkbuf.len;
 			exthdr.fields |= LINKPATH;
 			break;
 		default:
@@ -835,7 +827,6 @@ readpax(struct bufio *f, struct header *h)
 static int
 readcpio(struct bufio *f, struct header *h)
 {
-	static struct strbuf name, link;
 	static off_t end;
 	unsigned long type;
 	char buf[76];
@@ -850,7 +841,9 @@ readcpio(struct bufio *f, struct header *h)
 	h->namelen = octnum(buf + 59, 6);
 	if (h->namelen == 0)
 		fatal("invalid cpio header: c_namesize is 0");
-	h->name = sbufalloc(&name, h->namelen, 1024);
+	h->pathbuf.len = 0;
+	sbufalloc(&h->pathbuf, h->namelen, 1024);
+	h->name = h->pathbuf.str;
 	if (bioread(f, h->name, h->namelen) != h->namelen) {
 		if (f->err)
 			fatal("read: %s", strerror(f->err));
@@ -888,7 +881,8 @@ readcpio(struct bufio *f, struct header *h)
 		if (h->size > SIZE_MAX - 1)
 			fatal("symlink target is too long");
 		h->linklen = h->size;
-		h->link = sbufalloc(&link, h->linklen + 1, 1024);
+		h->linkbuf.len = 0;
+		h->link = sbufalloc(&h->linkbuf, h->linklen + 1, 1024);
 		if (bioread(f, h->link, h->linklen) != h->linklen) {
 			if (f->err)
 				fatal("read: %s", strerror(f->err));
@@ -1326,7 +1320,8 @@ filepush(struct filelist *files, const char *name, size_t pathlen, dev_t dev)
 static int
 readfile(struct bufio *f, struct header *h)
 {
-	static struct strbuf name, link;
+	/* use our own path buffer, since we use it for traversal */
+	static struct strbuf name;
 	struct stat st;
 	int flag;
 	DIR *dir;
@@ -1396,22 +1391,22 @@ next:
 		break;
 	case S_IFLNK:
 		h->type = SYMTYPE;
-		link.len = 0;
-		sbufalloc(&link, 1024, 1024);
+		h->linkbuf.len = 0;
+		sbufalloc(&h->linkbuf, 1024, 1024);
 		for (;;) {
-			ret = readlink(name.str, link.str, link.cap - 1);
+			ret = readlink(name.str, h->linkbuf.str, h->linkbuf.cap - 1);
 			if (ret < 0)
 				fatal("readlink %s:", name.str);
-			if (ret < link.cap)
+			if (ret < h->linkbuf.cap)
 				break;
-			if (link.cap > SSIZE_MAX / 2)
+			if (h->linkbuf.cap > SSIZE_MAX / 2)
 				fatal("symlink target is too long");
-			sbufalloc(&link, link.cap * 2, 1024);
+			sbufalloc(&h->linkbuf, h->linkbuf.cap * 2, 1024);
 		}
-		link.str[ret] = '\0';
-		link.len = ret;
-		h->link = link.str;
-		h->linklen = link.len;
+		h->linkbuf.str[ret] = '\0';
+		h->linkbuf.len = ret;
+		h->link = h->linkbuf.str;
+		h->linklen = h->linkbuf.len;
 		break;
 	case S_IFCHR:
 		h->type = CHRTYPE;
@@ -1511,9 +1506,9 @@ parseopts(char *s)
 		} else if (strcmp(key, "listopt") == 0) {
 			opt.listopt = val;
 		} else if (ext) {
-			extkeyval(&exthdr, &exthdrbuf, key, val, end - val);
+			extkeyval(&exthdr, key, val, end - val);
 		} else {
-			extkeyval(&globexthdr, &globexthdrbuf, key, val, end - val);
+			extkeyval(&globexthdr, key, val, end - val);
 		}
 	}
 }
@@ -1887,12 +1882,13 @@ applyrepl(struct replstr *r, struct strbuf *b, const char *old, size_t oldlen)
 static void
 replace(struct header *h)
 {
+	static struct strbuf name, link;
 	struct replstr *r;
 
 	for (r = replstr; r; r = r->next) {
-		if (applyrepl(r, &exthdrbuf.path, h->name, h->namelen)) {
-			h->name = exthdrbuf.path.str;
-			h->namelen = exthdrbuf.path.len;
+		if (applyrepl(r, &name, h->name, h->namelen)) {
+			h->name = name.str;
+			h->namelen = name.len;
 			break;
 		}
 	}
@@ -1901,9 +1897,9 @@ replace(struct header *h)
 	for (r = replstr; r; r = r->next) {
 		if (h->type == SYMTYPE && !r->symlink)
 			continue;
-		if (applyrepl(r, &exthdrbuf.linkpath, h->link, h->linklen)) {
-			h->link = exthdrbuf.linkpath.str;
-			h->linklen = exthdrbuf.linkpath.len;
+		if (applyrepl(r, &link, h->link, h->linklen)) {
+			h->link = link.str;
+			h->linklen = link.len;
 			break;
 		}
 	}
@@ -2059,6 +2055,7 @@ main(int argc, char *argv[])
 			files.input = stdin;
 	}
 
+	memset(&hdr, 0, sizeof hdr);
 	while (readhdr(&bioin, &hdr)) {
 		mergehdr(&hdr, &exthdr, ~0);
 		mergehdr(&hdr, &globexthdr, ~exthdr.fields);
