@@ -106,6 +106,7 @@ struct header {
 	char *data;
 	/* source file path and flags for hard link (-l flag) */
 	char *file;
+	struct timespec fileatime;
 	int flag;
 };
 
@@ -967,7 +968,7 @@ closefile(struct header *h)
 {
 	if (h->file) {
 		if (tflag)
-			futimens(bioin.fd, (struct timespec[2]){h->atime, {.tv_nsec = UTIME_OMIT}});
+			futimens(bioin.fd, (struct timespec[2]){h->fileatime, {.tv_nsec = UTIME_OMIT}});
 		close(bioin.fd);
 	}
 }
@@ -1408,6 +1409,7 @@ next:
 	h->slash = NULL;
 	h->data = NULL;
 	h->file = h->path;
+	h->fileatime = st.st_atim;
 	h->flag = flag;
 	switch (st.st_mode & S_IFMT) {
 	case S_IFREG:
