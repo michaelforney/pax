@@ -1721,7 +1721,7 @@ writefile(FILE *unused, struct header *h)
 
 		ts[0] = preserve & ATIME ? h->atime : (struct timespec){.tv_nsec = UTIME_OMIT};
 		ts[1] = preserve & MTIME ? h->mtime : (struct timespec){.tv_nsec = UTIME_OMIT};
-		if (utimensat(destfd, h->path, ts, 0) != 0) {
+		if (utimensat(destfd, h->path, ts, AT_SYMLINK_NOFOLLOW) != 0) {
 			fprintf(stderr, "utimens %s%s: %s\n", dest, h->path, strerror(errno));
 			exitstatus = 1;
 		}
