@@ -164,6 +164,7 @@ static int follow;
 static int preserve = ATIME | MTIME;
 static const struct keyword keywords[] = {
 	{"atime", ATIME},
+	{"ctime", CTIME},
 	{"gid", GID},
 	{"gname", GNAME},
 	{"linkpath", LINKPATH},
