@@ -506,11 +506,13 @@ gidtogname(uid_t gid, char *fallback)
 static unsigned long long
 octnum(const char *str, size_t len)
 {
+	const char *end;
 	unsigned c;
 	unsigned long long n;
 
 	n = 0;
-	while (len > 0) {
+	end = str + len;
+	for (; str != end; ++str) {
 		c = *str;
 		if (c == ' ' || c == '\0')
 			break;
@@ -518,30 +520,27 @@ octnum(const char *str, size_t len)
 		if (c > 7)
 			fatal("invalid number field");
 		n = n * 8 + c;
-		++str;
-		--len;
 	}
 	return n;
 }
 
 static unsigned long long
-decnum(const char *str, size_t len, char **end)
+decnum(const char *str, size_t len, char **pos)
 {
+	const char *end;
 	unsigned c;
 	unsigned long long n;
 
 	n = 0;
-	while (len > 0) {
-		c = (unsigned char)*str;
-		c -= '0';
+	end = str + len;
+	for (; str != end; ++str) {
+		c = *str - '0';
 		if (c > 9)
 			break;
 		n = n * 10 + c;
-		++str;
-		--len;
 	}
-	if (end)
-		*end = (char *)str;
+	if (pos)
+		*pos = (char *)str;
 	return n;
 }
 
@@ -552,7 +551,7 @@ readustar(struct bufio *f, struct header *h)
 	static off_t end;
 	size_t namelen, prefixlen, linklen;
 	unsigned long sum;
-	size_t i;
+	int i;
 	enum format format;
 
 	assert(bioin.off <= end);
@@ -567,7 +566,7 @@ readustar(struct bufio *f, struct header *h)
 	if (sum == 0)
 		return 0;
 	for (i = 148; i < 156; ++i)
-		sum = (sum + ' ') - ((unsigned char *)buf)[i];
+		sum += ' ' - ((unsigned char *)buf)[i];
 	if (sum != octnum(buf + 148, 8))
 		fatal("invalid tar header: bad checksum");
 	if (memcmp(buf + 257, "ustar\0" "00", 8) == 0)
@@ -666,11 +665,12 @@ extkeyval(struct header *h, const char *key, const char *val, size_t vallen)
 {
 	enum field field;
 	char *end;
+	const struct keyword *kw;
 
 	field = 0;
-	for (size_t i = 0; i < LEN(keywords); ++i) {
-		if (strcmp(key, keywords[i].name) == 0) {
-			field = keywords[i].field;
+	for (kw = keywords; kw != keywords + LEN(keywords); ++kw) {
+		if (strcmp(key, kw->name) == 0) {
+			field = kw->field;
 			break;
 		}
 	}
@@ -965,7 +965,7 @@ again:
 			return readpax;
 		hdrsum = 0;
 		for (i = 148; i < 156; ++i) {
-			sum = sum + ' ' - b[i];
+			sum += ' ' - b[i];
 			if (b[i] >= '0' && b[i] <= '9')
 				hdrsum = hdrsum * 8 + (b[i] - '0');
 		}
@@ -1625,9 +1625,11 @@ parseopts(char *s)
 		} else if (!val) {
 			fatal("option '%s' must have a value", key);
 		} else if (strcmp(key, "delete") == 0) {
-			for (size_t i = 0; i < LEN(keywords); ++i) {
-				switch (fnmatch(val, keywords[i].name, 0)) {
-				case 0: opt.delete |= keywords[i].field; break;
+			const struct keyword *kw;
+
+			for (kw = keywords; kw != keywords + LEN(keywords); ++kw) {
+				switch (fnmatch(val, kw->name, 0)) {
+				case 0: opt.delete |= kw->field; break;
 				case FNM_NOMATCH: break;
 				default: fatal("fnmatch error");
 				}
@@ -1871,8 +1873,8 @@ match(struct header *h)
 	if (patslen == 0)
 		return 1;
 	if (!dflag) {
-		for (i = 0; i < dirslen; ++i) {
-			if (h->pathlen >= dirs[i].pathlen && memcmp(h->path, dirs[i].path, dirs[i].pathlen) == 0)
+		for (struct dir *d = dirs; d < dirs + dirslen; ++d) {
+			if (h->pathlen >= d->pathlen && memcmp(h->path, d->path, d->pathlen) == 0)
 				return !cflag;
 		}
 	}
@@ -2051,7 +2053,8 @@ main(int argc, char *argv[])
 	writefn *writehdr = listhdr;
 	FILE *out = NULL;
 	pid_t pid = -1;
-	size_t i;
+	int i;
+	size_t l;
 
 	ARGBEGIN {
 	case 'a':
@@ -2182,12 +2185,12 @@ main(int argc, char *argv[])
 	case COPY:
 		if (name || argc == 0)
 			usage();
-		i = strlen(argv[--argc]);
-		dest = malloc(i + 2);
+		l = strlen(argv[--argc]);
+		dest = malloc(l + 2);
 		if (!dest)
 			fatal(NULL);
-		memcpy(dest, argv[argc], i);
-		memcpy(dest + i, "/", 2);
+		memcpy(dest, argv[argc], l);
+		memcpy(dest + l, "/", 2);
 		destfd = open(dest, O_SEARCH|O_DIRECTORY);
 		if (destfd < 0)
 			fatal("open %s:", dest);
