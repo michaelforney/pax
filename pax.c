@@ -2093,6 +2093,8 @@ main(int argc, char *argv[])
 		}
 	}
 	writehdr(stdout, NULL);
+	if (fflush(stdout) != 0)
+		fatal("write:");
 	for (i = 0; i < patslen; ++i) {
 		if (!patsused[i])
 			fatal("pattern not matched: %s", pats[i]);
