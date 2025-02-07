@@ -16,9 +16,11 @@
 #include <grp.h>
 #include <pwd.h>
 #include <regex.h>
+#include <spawn.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <sys/wait.h>
 #include <tar.h>
 #include <unistd.h>
 #ifndef makedev
@@ -903,13 +905,46 @@ readcpio(struct bufio *f, struct header *h)
 	return 1;
 }
 
+static int
+decompress(const char *algo, int fd, pid_t *pid)
+{
+	extern char **environ;
+	posix_spawn_file_actions_t fa;
+	int p[2], err;
+	char *argv[3];
+
+	if (!algo)
+		return fd;
+	argv[0] = (char *)algo;
+	argv[1] = "-dc";
+	argv[2] = NULL;
+	if (pipe2(p, O_CLOEXEC) != 0)
+		fatal("pipe2:");
+	err = posix_spawn_file_actions_init(&fa);
+	if (err)
+		fatal("posix_spawn_file_actions_init: %s", strerror(errno));
+	err = posix_spawn_file_actions_adddup2(&fa, fd, 0);
+	if (err)
+		fatal("posix_spawn_file_actions_adddup2: %s", strerror(errno));
+	err = posix_spawn_file_actions_adddup2(&fa, p[1], 1);
+	if (err)
+		fatal("posix_spawn_file_actions_adddup2: %s", strerror(errno));
+	err = posix_spawnp(pid, algo, &fa, NULL, argv, environ);
+	if (err)
+		fatal("posix_spawnp %s: %s", algo, strerror(errno));
+	close(p[1]);
+	return p[0];
+}
+
 static readfn *
-detectformat(struct bufio *f)
+detectformat(struct bufio *f, const char *algo, pid_t *pid)
 {
 	size_t l, i;
 	ssize_t n;
 	char *b;
 
+again:
+	f->fd = decompress(algo, f->fd, pid);
 	b = f->buf;
 	for (l = 0; l < 512; l += n) {
 		n = read(f->fd, b + l, 512 - l);
@@ -937,7 +972,75 @@ detectformat(struct bufio *f)
 		if (memcmp(b, "070707", 6) == 0)
 			return readcpio;
 	}
+	if (!algo) {
+		static const struct command {
+			char algo[6];
+			unsigned char magiclen;
+			unsigned char magic[6];
+		} cmds[] = {
+			{"gzip", 2, {0x1F, 0x8B}},
+			{"bzip2", 2, {'B', 'Z'}},
+			{"xz", 6, {0xFD, '7', 'z', 'X', 'Z', 0x00}},
+			{"zstd", 4, {0x28, 0xB5, 0x2F, 0xFD}},
+		};
+		const struct command *c;
+
+		for (c = cmds; c < cmds + LEN(cmds); ++c) {
+			if (l >= c->magiclen && memcmp(b, c->magic, c->magiclen) == 0) {
+				if (lseek(f->fd, 0, SEEK_SET) != 0)
+					fatal("compression detection requires seekable input");
+				algo = c->algo;
+				goto again;
+			}
+		}
+	}
 	return NULL;
+}
+
+static FILE *
+compress(const char *algo, const char *name, pid_t *pid)
+{
+	extern char **environ;
+	FILE *f;
+	int fd, p[2], err;
+	posix_spawn_file_actions_t fa;
+	char *argv[3];
+
+	if (!algo) {
+		if (!name && !freopen(name, "w", stdout))
+			fatal("open %s:");
+		return stdout;
+	}
+	argv[0] = (char *)algo;
+	argv[1] = "-c";
+	argv[2] = NULL;
+	if (name) {
+		fd = open(name, O_WRONLY | O_CREAT, 0666);
+		if (fd < 0)
+			fatal("open %s:");
+	} else {
+		fd = 1;
+	}
+	if (pipe2(p, O_CLOEXEC) != 0)
+		fatal("pipe2:");
+	f = fdopen(p[1], "w");
+	if (!f)
+		fatal("fdopen:");
+	err = posix_spawn_file_actions_init(&fa);
+	if (err)
+		fatal("posix_spawn_file_actions_init: %s", strerror(errno));
+	err = posix_spawn_file_actions_adddup2(&fa, p[0], 0);
+	if (err)
+		fatal("posix_spawn_file_actions_adddup2: %s", strerror(errno));
+	err = posix_spawn_file_actions_adddup2(&fa, fd, 1);
+	if (err)
+		fatal("posix_spawn_file_actions_adddup2: %s", strerror(errno));
+	err = posix_spawnp(pid, algo, &fa, NULL, argv, environ);
+	if (err)
+		fatal("posix_spawnp %s: %s", algo, strerror(errno));
+	close(fd);
+	close(p[0]);
+	return f;
 }
 
 static char *
@@ -1937,10 +2040,13 @@ int
 main(int argc, char *argv[])
 {
 	const char *name = NULL, *arg, *format = "pax";
+	const char *algo = NULL;
 	enum mode mode = LIST;
 	struct header hdr;
 	readfn *readhdr = NULL;
 	writefn *writehdr = listhdr;
+	FILE *out = NULL;
+	pid_t pid = -1;
 	size_t i;
 
 	ARGBEGIN {
@@ -1961,6 +2067,12 @@ main(int argc, char *argv[])
 		break;
 	case 'H':
 		follow = 'H';
+		break;
+	case 'j':
+		algo = "bzip2";
+		break;
+	case 'J':
+		algo = "xz";
 		break;
 	case 'k':
 		kflag = 1;
@@ -2013,6 +2125,9 @@ main(int argc, char *argv[])
 	case 'X':
 		Xflag = 1;
 		break;
+	case 'z':
+		algo = "gzip";
+		break;
 	default:
 		usage();
 	} ARGEND;
@@ -2035,7 +2150,7 @@ main(int argc, char *argv[])
 			if (bioin.fd < 0)
 				fatal("open %s:", name);
 		}
-		readhdr = detectformat(&bioin);
+		readhdr = detectformat(&bioin, algo, &pid);
 		if (!readhdr)
 			fatal("could not detect archive format");
 		pats = argv;
@@ -2045,8 +2160,9 @@ main(int argc, char *argv[])
 			fatal(NULL);
 		break;
 	case WRITE:
-		if (name && strcmp(name, "-") != 0 && !freopen(name, "w", stdout))
-			fatal("open %s:", name);
+		if (strcmp(name, "-") == 0)
+			name = NULL;
+		out = compress(algo, name, &pid);
 		if (strcmp(format, "ustar") == 0) {
 			writehdr = writeustar;
 		} else if (strcmp(format, "pax") == 0) {
@@ -2089,16 +2205,29 @@ main(int argc, char *argv[])
 		mergehdr(&hdr, &globexthdr, ~exthdr.fields);
 		if (match(&hdr)) {
 			replace(&hdr);
-			writehdr(stdout, &hdr);
+			writehdr(out, &hdr);
 		}
 	}
-	writehdr(stdout, NULL);
-	if (fflush(stdout) != 0)
-		fatal("write:");
+	writehdr(out, NULL);
+	if (out) {
+		if (fflush(out) != 0)
+			fatal("write:");
+		fclose(out);
+	}
 	for (i = 0; i < patslen; ++i) {
 		if (!patsused[i])
 			fatal("pattern not matched: %s", pats[i]);
 	}
 
+	if (pid != -1) {
+		int st;
+
+		if (waitpid(pid, &st, 0) == -1)
+			fatal("waitpid:");
+		if (WIFEXITED(st) && WEXITSTATUS(st) != 0)
+			fatal("child exited with status %d", WEXITSTATUS(st));
+		if (WIFSIGNALED(st))
+			fatal("child terminated by signal %d", WTERMSIG(st));
+	}
 	return exitstatus;
 }
