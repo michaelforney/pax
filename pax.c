@@ -617,7 +617,10 @@ readustar(struct bufio *f, struct header *h)
 		h->link = buf + 157;
 	}
 	h->linklen = linklen;
-	if (format != V7) {
+	if (format == V7) {
+		h->uname = "";
+		h->gname = "";
+	} else {
 		h->fields |= UNAME | GNAME;
 		h->uname = buf + 265;
 		if (!memchr(h->uname, '\0', 32))
@@ -633,7 +636,6 @@ readustar(struct bufio *f, struct header *h)
 			h->rdev = makedev(major, minor);
 		}
 	}
-
 	return 1;
 }
 
