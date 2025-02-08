@@ -1015,7 +1015,7 @@ compress(const char *algo, const char *name, pid_t *pid)
 	char *argv[3];
 
 	if (!algo) {
-		if (!name && !freopen(name, "w", stdout))
+		if (name && !freopen(name, "w", stdout))
 			fatal("open %s:");
 		return stdout;
 	}
@@ -2173,7 +2173,7 @@ main(int argc, char *argv[])
 		}
 		break;
 	case WRITE:
-		if (strcmp(name, "-") == 0)
+		if (name && strcmp(name, "-") == 0)
 			name = NULL;
 		out = compress(algo, name, &pid);
 		if (strcmp(format, "ustar") == 0) {
