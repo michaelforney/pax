@@ -989,6 +989,7 @@ again:
 			{"bzip2", 2, {'B', 'Z'}},
 			{"xz", 6, {0xFD, '7', 'z', 'X', 'Z', 0x00}},
 			{"zstd", 4, {0x28, 0xB5, 0x2F, 0xFD}},
+			{"lzip", 4, {'L', 'Z', 'I', 'P'}},
 		};
 		const struct command *c;
 
