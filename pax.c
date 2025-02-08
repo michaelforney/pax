@@ -512,6 +512,9 @@ octnum(const char *str, size_t len)
 
 	n = 0;
 	end = str + len;
+	/* some archives have leading spaces, so skip them */
+	for (; str != end && *str == ' '; ++str)
+		;
 	for (; str != end; ++str) {
 		c = *str;
 		if (c == ' ' || c == '\0')
