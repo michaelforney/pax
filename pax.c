@@ -1687,6 +1687,233 @@ parseopts(char *s)
 	}
 }
 
+static bool
+kwequal(const char *kw, size_t kwlen, const char *str)
+{
+	return memcmp(kw, str, kwlen) == 0 && str[kwlen] == '\0';
+}
+
+static void
+modefmt(char str[static 11], char type, mode_t mode)
+{
+	memset(str, '-', 10);
+	str[10] = '\0';
+	switch (type) {
+	case SYMTYPE: str[0] = 'l'; break;
+	case CHRTYPE: str[0] = 'c'; break;
+	case BLKTYPE: str[0] = 'b'; break;
+	case DIRTYPE: str[0] = 'd'; break;
+	case FIFOTYPE: str[0] = 'p'; break;
+	}
+	if (mode & S_IRUSR) str[1] = 'r';
+	if (mode & S_IWUSR) str[2] = 'w';
+	if (mode & S_IXUSR) str[3] = 'x';
+	if (mode & S_IRGRP) str[4] = 'r';
+	if (mode & S_IWGRP) str[5] = 'w';
+	if (mode & S_IXGRP) str[6] = 'x';
+	if (mode & S_IROTH) str[7] = 'r';
+	if (mode & S_IWOTH) str[8] = 'w';
+	if (mode & S_IXOTH) str[9] = 'x';
+	if (mode & S_ISUID) str[3] = str[3] == 'x' ? 's' : 'S';
+	if (mode & S_ISGID) str[3] = str[6] == 'x' ? 's' : 'S';
+	if (mode & S_ISVTX) str[9] = str[9] == 'x' ? 't' : 'T';
+}
+
+static void
+hdrfmt(const char *fmt, struct header *h)
+{
+	const char *pos, *sub;
+	int chr;
+	char fmtbuf[64], subbuf[128], strbuf[128];
+	const char *kw;
+	size_t kwlen, fmtlen, sublen;
+	struct tm *tm;
+	time_t t;
+	mode_t m;
+	union {
+		const char *s;
+		uintmax_t u;
+	} arg;
+
+	for (;;) {
+		chr = *fmt;
+		switch (chr) {
+		case '%':
+			pos = fmt + 1;
+			while (strchr("-+ #0", *pos))
+				++pos;
+			while ((unsigned)*pos - '0' < 10)
+				++pos;
+			if (*pos == '.') {
+				do ++pos;
+				while ((unsigned)*pos - '0' < 10);
+			}
+			fmtlen = pos - fmt;
+			if (fmtlen > sizeof fmtbuf - 3)
+				fatal("invalid listopt: conversion specification is too long");
+			memcpy(fmtbuf, fmt, fmtlen);
+			if (*pos == '(') {
+				kw = ++pos;
+				pos = strchr(pos, ')');
+				if (!pos)
+					fatal("invalid listopt: no closing ')'");
+				if (pos - kw > INT_MAX)
+					fatal("invalid listopt: keyword is too long");
+				kwlen = pos - kw;
+				++pos;
+			} else {
+				kw = NULL;
+			}
+			fmt = pos;
+			chr = *pos;
+			switch (chr) {
+			case 'd':
+			case 'i':
+				chr = 'u';
+				/* fallthrough */
+			case 'o':
+			case 'u':
+			case 'x':
+			case 'X':
+				if (!kw)
+					fatal("invalid listopt: missing keyword");
+				if (kwequal(kw, kwlen, "mode")) {
+					arg.u = h->mode;
+				} else if (kwequal(kw, kwlen, "uid") || kwequal(kw, kwlen, "c_uid")) {
+					arg.u = h->uid;
+				} else if (kwequal(kw, kwlen, "gid") || kwequal(kw, kwlen, "c_gid")) {
+					arg.u = h->gid;
+				} else if (kwequal(kw, kwlen, "size")) {
+					arg.u = h->size;
+				} else if (kwequal(kw, kwlen, "mtime") || kwequal(kw, kwlen, "c_mtime")) {
+					arg.u = h->mtime.tv_sec;
+				} else if (kwequal(kw, kwlen, "devmajor")) {
+					arg.u = major(h->rdev);
+				} else if (kwequal(kw, kwlen, "devminor")) {
+					arg.u = minor(h->rdev);
+				} else if (kwequal(kw, kwlen, "c_magic")) {
+					arg.u = 070707;
+				} else if (kwequal(kw, kwlen, "c_dev")) {
+					arg.u = h->dev;
+				} else if (kwequal(kw, kwlen, "c_ino")) {
+					arg.u = h->ino;
+				} else if (kwequal(kw, kwlen, "c_nlink")) {
+					arg.u = h->nlink;
+				} else if (kwequal(kw, kwlen, "c_rdev")) {
+					arg.u = h->rdev;
+				} else if (kwequal(kw, kwlen, "c_mode")) {
+					switch (h->type) {
+					case DIRTYPE: arg.u = C_ISDIR; break;
+					case FIFOTYPE: arg.u = C_ISFIFO; break;
+					case REGTYPE: arg.u = C_ISREG; break;
+					case SYMTYPE: arg.u = C_ISLNK; break;
+					case BLKTYPE: arg.u = C_ISBLK; break;
+					case CHRTYPE: arg.u = C_ISCHR; break;
+					}
+					arg.u |= h->mode;
+				} else if (kwequal(kw, kwlen, "c_namesize")) {
+					arg.u = h->pathlen + 1;
+				} else if (kwequal(kw, kwlen, "c_filesize")) {
+					arg.u = h->size;
+				} else {
+					fatal("invalid listopt: unknown keyword '%.*s'", (int)kwlen, kw);
+				}
+				fmtbuf[fmtlen++] = 'j';
+				fmtbuf[fmtlen++] = chr;
+				fmtbuf[fmtlen] = '\0';
+				printf(fmtbuf, arg.u);
+				break;
+			case 'T':
+				pos = kw ? memchr(kw, '=', kwlen) : NULL;
+				if (pos) {
+					sublen = kwlen - (pos + 1 - kw);
+					if (sublen > sizeof subbuf)
+						fatal("invalid listopt: time subformat is too long");
+					memcpy(subbuf, pos + 1, sublen);
+					subbuf[sublen] = '\0';
+					sub = subbuf;
+					kwlen = pos - kw;
+				} else {
+					sub = "%b %e %H:%M %Y";
+				}
+				if (!kw || kwequal(kw, kwlen, "mtime") || kwequal(kw, kwlen, "c_mtime"))
+					t = h->mtime.tv_sec;
+				else if (kwequal(kw, kwlen, "atime"))
+					t = h->atime.tv_sec;
+				else if (kwequal(kw, kwlen, "ctime"))
+					t = h->ctime.tv_sec;
+				else
+					fatal("invalid listopt: unknown keyword '%.*s'", (int)kwlen, kw);
+				tm = localtime(&t);
+				if (!tm)
+					fatal("localtime:");
+				strftime(strbuf, sizeof strbuf, sub, tm);
+				arg.s = strbuf;
+				goto s;
+			case 'M':
+				if (!kw || kwequal(kw, kwlen, "mode") || kwequal(kw, kwlen, "c_mode"))
+					m = h->mode;
+				else
+					fatal("invalid listopt: unknown keyword '%.*s'", (int)kwlen, kw);
+				modefmt(strbuf, h->type, m);
+				arg.s = strbuf;
+				goto s;
+			case 'D':
+				break;
+			case 'F':
+				if (!kw) {
+					arg.s = h->path;
+					goto s;
+				}
+				break;
+			case 'L':
+				break;
+			case 's':
+				if (!kw)
+					fatal("invalid listopt: missing keyword");
+				if (kwequal(kw, kwlen, "name") || kwequal(kw, kwlen, "path") || kwequal(kw, kwlen, "c_name"))
+					arg.s = h->path;
+				else if (kwequal(kw, kwlen, "linkname"))
+					arg.s = h->link;
+				else if (kwequal(kw, kwlen, "uname"))
+					arg.s = h->uname;
+				else if (kwequal(kw, kwlen, "gname"))
+					arg.s = h->gname;
+				else
+					fatal("invalid listopt: unknown keyword '%.*s'", (int)kwlen, kw);
+			s:
+				fmtbuf[fmtlen++] = 's';
+				fmtbuf[fmtlen] = '\0';
+				printf(fmtbuf, arg.s);
+				break;
+			default:
+				fatal("invalid listopt: unknown conversion specifier '%c'", *pos);
+			}
+			break;
+		case '\\':
+			chr = *++fmt;
+			switch (chr) {
+			case '\\': putchar('\\'); break;
+			case 'a': putchar('\a'); break;
+			case 'b': putchar('\b'); break;
+			case 'f': putchar('\f'); break;
+			case 'n': putchar('\n'); break;
+			case 'r': putchar('\r'); break;
+			case 't': putchar('\t'); break;
+			case 'v': putchar('\v'); break;
+			}
+			break;
+		default:
+			putchar(chr);
+			break;
+		case '\0':
+			putchar('\n');
+			return;
+		}
+		++fmt;
+	}
+}
+
 static void
 listhdr(FILE *f, struct header *h)
 {
@@ -1698,33 +1925,15 @@ listhdr(FILE *f, struct header *h)
 
 	if (!h)
 		return;
-	if (opt.listopt)
-		fatal("listopt is not supported");
+	if (opt.listopt) {
+		hdrfmt(opt.listopt, h);
+		return;
+	}
 	if (!vflag) {
 		printf("%s\n", h->path);
 		return;
 	}
-	memset(mode, '-', sizeof mode - 1);
-	mode[10] = '\0';
-	switch (h->type) {
-	case SYMTYPE: mode[0] = 'l'; break;
-	case CHRTYPE: mode[0] = 'c'; break;
-	case BLKTYPE: mode[0] = 'b'; break;
-	case DIRTYPE: mode[0] = 'd'; break;
-	case FIFOTYPE: mode[0] = 'p'; break;
-	}
-	if (h->mode & S_IRUSR) mode[1] = 'r';
-	if (h->mode & S_IWUSR) mode[2] = 'w';
-	if (h->mode & S_IXUSR) mode[3] = 'x';
-	if (h->mode & S_IRGRP) mode[4] = 'r';
-	if (h->mode & S_IWGRP) mode[5] = 'w';
-	if (h->mode & S_IXGRP) mode[6] = 'x';
-	if (h->mode & S_IROTH) mode[7] = 'r';
-	if (h->mode & S_IWOTH) mode[8] = 'w';
-	if (h->mode & S_IXOTH) mode[9] = 'x';
-	if (h->mode & S_ISUID) mode[3] = mode[3] == 'x' ? 's' : 'S';
-	if (h->mode & S_ISGID) mode[3] = mode[6] == 'x' ? 's' : 'S';
-	if (h->mode & S_ISVTX) mode[9] = mode[9] == 'x' ? 't' : 'T';
+	modefmt(mode, h->type, h->mode);
 	uname = h->uname;
 	if (!uname[0]) {
 		snprintf(unamebuf, sizeof unamebuf, "%ju", (uintmax_t)h->uid);
