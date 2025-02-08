@@ -941,11 +941,11 @@ detectformat(struct bufio *f, const char *algo, pid_t *pid)
 {
 	size_t l, i;
 	ssize_t n;
-	char *b;
+	unsigned char *b;
 
 again:
 	f->fd = decompress(algo, f->fd, pid);
-	b = f->buf;
+	b = (unsigned char *)f->buf;
 	for (l = 0; l < 512; l += n) {
 		n = read(f->fd, b + l, 512 - l);
 		if (n < 0)
@@ -956,16 +956,20 @@ again:
 	f->pos = f->buf;
 	f->end = f->buf + l;
 	if (l == 512) {
-		unsigned long sum;
+		unsigned long sum, hdrsum;
 
 		sum = 0;
 		for (i = 0; i < 512; ++i)
-			sum += ((unsigned char *)b)[i];
+			sum += b[i];
 		if (sum == 0)
 			return readpax;
-		for (i = 148; i < 156; ++i)
-			sum = (sum + ' ') - ((unsigned char *)b)[i];
-		if (sum == octnum(b + 148, 8))
+		hdrsum = 0;
+		for (i = 148; i < 156; ++i) {
+			sum = sum + ' ' - b[i];
+			if (b[i] >= '0' && b[i] <= '9')
+				hdrsum = hdrsum * 8 + (b[i] - '0');
+		}
+		if (sum == hdrsum)
 			return readpax;
 	}
 	if (l >= 76) {
