@@ -187,8 +187,6 @@ static struct {
 static struct header exthdr, globexthdr;
 static struct replstr *replstr;
 static time_t curtime;
-static struct account *accts;
-static size_t acctslen;
 static char **pats;
 static size_t patslen;
 static bool *patsused;
@@ -402,6 +400,8 @@ copy(struct bufio *r, off_t nr, FILE *w, off_t nw)
 static struct account *
 findaccount(const char *name, uid_t uid, gid_t gid)
 {
+	static struct account *accts;
+	static size_t acctslen;
 	struct account *a;
 
 	for (a = accts; a < accts + acctslen; ++a) {
