@@ -2164,11 +2164,13 @@ main(int argc, char *argv[])
 		readhdr = detectformat(&bioin, algo, &pid);
 		if (!readhdr)
 			fatal("could not detect archive format");
-		pats = argv;
-		patslen = argc;
-		patsused = calloc(1, argc);
-		if (!patsused)
-			fatal(NULL);
+		if (argc) {
+			pats = argv;
+			patslen = argc;
+			patsused = calloc(1, argc);
+			if (!patsused)
+				fatal(NULL);
+		}
 		break;
 	case WRITE:
 		if (strcmp(name, "-") == 0)
