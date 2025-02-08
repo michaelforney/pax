@@ -1174,7 +1174,7 @@ writeustar(FILE *f, struct header *h)
 		memset(bioin.buf, 0, pad);
 		if (fwrite(bioin.buf, 1, pad, f) != pad)
 			fatal("write:");
-	} else {
+	} else if (h->size > 0) {
 		openfile(h);
 		copy(&bioin, h->size, f, ROUNDUP(h->size, 512));
 		closefile(h);
