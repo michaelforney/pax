@@ -28,6 +28,10 @@
 #endif
 #include "arg.h"
 
+#ifndef O_SEARCH  /* not present on some BSDs */
+#define O_SEARCH 0
+#endif
+
 #define LEN(a) (sizeof (a) / sizeof *(a))
 #define ROUNDUP(x, a) (((x) + ((a) - 1)) & ~((a) - 1))
 #define MAXTIME 077777777777
