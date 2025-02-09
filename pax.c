@@ -1715,7 +1715,7 @@ listhdr(FILE *f, struct header *h)
 		snprintf(info, sizeof info, "%u, %u", major(h->rdev), minor(h->rdev));
 	else
 		snprintf(info, sizeof info, "%ju", (uintmax_t)h->size);
-	printf("%s %2d %-8s %-8s %9s %s %s", mode, 1, uname, gname, info, time, h->path);
+	printf("%s %2ju %-8s %-8s %9s %s %s", mode, (uintmax_t)h->nlink, uname, gname, info, time, h->path);
 	switch (h->type) {
 	case LNKTYPE: printf(" == %s", h->link); break;
 	case SYMTYPE: printf(" -> %s", h->link); break;
