@@ -86,9 +86,9 @@ struct header {
 	dev_t dev;
 	ino_t ino;
 	mode_t mode;
-	nlink_t nlink;
 	uid_t uid;
 	gid_t gid;
+	nlink_t nlink;
 	dev_t rdev;
 	off_t size;
 	struct timespec atime, mtime, ctime;
@@ -594,9 +594,12 @@ readustar(struct bufio *f, struct header *h)
 		h->path = buf;
 		h->pathlen = namelen;
 	}
+	h->dev = 0;
+	h->ino = 0;
 	h->mode = octnum(buf + 100, 8);
 	h->uid = octnum(buf + 108, 8);
 	h->gid = octnum(buf + 116, 8);
+	h->nlink = 1;
 	h->size = octnum(buf + 124, 12);
 	end = bioin.off + ROUNDUP(h->size, 512);
 	h->mtime = (struct timespec){.tv_sec = octnum(buf + 136, 12)};
@@ -880,12 +883,12 @@ readcpio(struct bufio *f, struct header *h)
 	}
 	h->uid = octnum(buf + 24, 6);
 	h->gid = octnum(buf + 30, 6);
-	h->uname = "";
-	h->gname = "";
 	h->nlink = octnum(buf + 36, 6);
 	h->rdev = octnum(buf + 42, 6);
 	h->mtime = (struct timespec){.tv_sec = octnum(buf + 48, 11)};
 	h->size = octnum(buf + 65, 11);
+	h->uname = "";
+	h->gname = "";
 	if (h->type == SYMTYPE) {
 		if (h->size > SIZE_MAX - 1)
 			fatal("symlink target is too long");
@@ -1508,16 +1511,16 @@ next:
 	h->dev = st.st_dev;
 	h->ino = st.st_ino;
 	h->mode = st.st_mode & ~S_IFMT;
-	h->nlink = st.st_nlink;
 	h->uid = st.st_uid;
 	h->gid = st.st_gid;
-	h->uname = uidtouname(st.st_uid, "");
-	h->gname = gidtogname(st.st_gid, "");
+	h->nlink = st.st_nlink;
 	h->rdev = 0;
 	h->size = 0;
 	h->atime = st.st_atim;
 	h->mtime = st.st_mtim;
 	h->ctime = st.st_ctim;
+	h->uname = uidtouname(st.st_uid, "");
+	h->gname = gidtogname(st.st_gid, "");
 	h->link = "";
 	h->linklen = 0;
 	h->slash = NULL;
