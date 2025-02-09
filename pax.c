@@ -1409,7 +1409,7 @@ writecpio(FILE *f, struct header *h)
 	size = h->type == SYMTYPE ? h->linklen : h->size;
 	if (size > MAXSIZE)
 		fatal("size is too large: %ju", h->size);
-	len = snprintf(buf, 100, "070707%.6lo%.6lo%.6lo%.6lo%.6lo%.6lo%.6lo%.11llo%.6lo%.11jo",
+	len = snprintf(buf, sizeof buf, "070707%.6lo%.6lo%.6lo%.6lo%.6lo%.6lo%.6lo%.11llo%.6lo%.11jo",
 		(unsigned long)h->dev, ino, mode,
 		(unsigned long)h->uid, (unsigned long)h->gid,
 		(unsigned long)h->nlink, (unsigned long)h->rdev,
