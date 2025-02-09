@@ -1,4 +1,4 @@
-#define _XOPEN_SOURCE 700
+#define _DEFAULT_SOURCE  /* needed for reallocarray and major/minor */
 #include <assert.h>
 #include <errno.h>
 #include <limits.h>
@@ -214,16 +214,6 @@ fatal(const char *fmt, ...)
 		perror(NULL);
 	}
 	exit(1);
-}
-
-static void *
-reallocarray(void *p, size_t n, size_t m)
-{
-	if (m && n > SIZE_MAX / m) {
-		errno = ENOMEM;
-		return NULL;
-	}
-	return realloc(p, n * m);
 }
 
 static char *
