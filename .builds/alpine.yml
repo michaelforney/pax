@@ -1,0 +1,5 @@
+image: alpine/latest
+sources:
+- https://git.sr.ht/~mcf/pax
+tasks:
+- build: make -C pax
