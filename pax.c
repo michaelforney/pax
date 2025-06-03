@@ -1853,7 +1853,7 @@ writefile(FILE *unused, struct header *h)
 			mode = h->mode;
 		}
 	}
-	if (preserve & MODE) {
+	if (preserve & MODE && h->type != SYMTYPE) {
 		if (fchmodat(destfd, h->path, mode, 0) != 0) {
 			fprintf(stderr, "chmod %s%s: %s\n", dest, h->path, strerror(errno));
 			exitstatus = 1;
