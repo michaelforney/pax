@@ -1718,7 +1718,7 @@ listhdr(FILE *f, struct header *h)
 }
 
 static void
-mkdirp(char *name, size_t len)
+mkdirp(int fd, char *name, size_t len)
 {
 	char *p;
 
@@ -1728,7 +1728,7 @@ mkdirp(char *name, size_t len)
 		if (*p != '/')
 			continue;
 		*p = 0;
-		if (mkdir(name, 0777) != 0 && errno != EEXIST)
+		if (mkdirat(fd, name, 0777) != 0 && errno != EEXIST)
 			fatal("mkdir %s:", name);
 		*p = '/';
 	}
@@ -1759,7 +1759,7 @@ writefile(FILE *unused, struct header *h)
 	if (0) {
 	retry:
 		retry = 0;
-		mkdirp(h->path, h->pathlen);
+		mkdirp(destfd, h->path, h->pathlen);
 	}
 	mode = h->mode & ~(S_ISUID | S_ISGID);
 	switch (h->type) {
