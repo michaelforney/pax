@@ -2145,6 +2145,8 @@ main(int argc, char *argv[])
 	exthdr.delete = exthdr.fields;
 	globexthdr.fields &= ~opt.delete;
 	globexthdr.delete = globexthdr.fields;
+	if ((exthdr.fields | globexthdr.fields | opt.delete) & SIZE)
+		fatal("field 'size' cannot be overridden or deleted");
 
 	switch (mode) {
 	case READ:
