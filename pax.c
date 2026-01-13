@@ -1643,10 +1643,8 @@ parseopts(char *s)
 			fatal("option 'invalid' is not implemented");
 		} else if (strcmp(key, "listopt") == 0) {
 			opt.listopt = val;
-		} else if (ext) {
-			extkeyval(&exthdr, key, val, end - val);
 		} else {
-			extkeyval(&globexthdr, key, val, end - val);
+			extkeyval(ext ? &exthdr : &globexthdr, key, val, end - val);
 		}
 	}
 }
