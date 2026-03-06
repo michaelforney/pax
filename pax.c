@@ -1,4 +1,4 @@
-#define _DEFAULT_SOURCE  /* needed for reallocarray and major/minor */
+#define _GNU_SOURCE  /* needed for reallocarray, pipe2 (POSIX.1-2024), and major/minor (non-POSIX) */
 #include <assert.h>
 #include <errno.h>
 #include <limits.h>
