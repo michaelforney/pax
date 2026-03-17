@@ -1,4 +1,4 @@
-#define _GNU_SOURCE  /* needed for reallocarray, pipe2 (POSIX.1-2024), and major/minor (non-POSIX) */
+#define _GNU_SOURCE  /* needed for reallocarray (POSIX.1-2024) and major/minor (non-POSIX) */
 #include <assert.h>
 #include <errno.h>
 #include <limits.h>
@@ -30,6 +30,21 @@
 
 #ifndef O_SEARCH  /* not present on some BSDs */
 #define O_SEARCH 0
+#endif
+
+#ifndef HAVE_PIPE2
+static int
+pax_pipe2(int fd[2], int flag)
+{
+	assert((flag | O_CLOEXEC) == O_CLOEXEC);
+	if (pipe(fd) != 0)
+		return -1;
+	if (flag & O_CLOEXEC && (fcntl(fd[0], F_SETFD, FD_CLOEXEC) != 0 || fcntl(fd[1], F_SETFD, FD_CLOEXEC) != 0))
+		return -1;
+	return 0;
+}
+#undef pipe2
+#define pipe2 pax_pipe2
 #endif
 
 #define LEN(a) (sizeof (a) / sizeof *(a))
