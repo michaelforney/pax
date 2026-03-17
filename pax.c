@@ -1,4 +1,4 @@
-#define _GNU_SOURCE  /* needed for reallocarray (POSIX.1-2024) and major/minor (non-POSIX) */
+#define _GNU_SOURCE  /* needed for major/minor (non-POSIX) */
 #include <assert.h>
 #include <errno.h>
 #include <limits.h>
@@ -30,6 +30,20 @@
 
 #ifndef O_SEARCH  /* not present on some BSDs */
 #define O_SEARCH 0
+#endif
+
+#ifndef HAVE_REALLOCARRAY
+static void *
+pax_reallocarray(void *p, size_t n, size_t m)
+{
+	if (m && n > SIZE_MAX / m) {
+		errno = ENOMEM;
+		return NULL;
+	}
+	return realloc(p, n * m);
+}
+#undef reallocarray
+#define reallocarray pax_reallocarray
 #endif
 
 #ifndef HAVE_PIPE2
