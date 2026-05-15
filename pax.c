@@ -2250,7 +2250,8 @@ main(int argc, char *argv[])
 		mergehdr(&hdr, &globexthdr, ~exthdr.fields);
 		if (match(&hdr)) {
 			replace(&hdr);
-			writehdr(out, &hdr);
+			if (*hdr.path)
+				writehdr(out, &hdr);
 		}
 	}
 	writehdr(out, NULL);
