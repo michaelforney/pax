@@ -1149,9 +1149,12 @@ writeustar(FILE *f, struct header *h)
 			fatal("path is too long: %s\n", h->path);
 	}
 	if (slash) {
-		*slash = '\0';
+		size_t len;
+
 		strncpy(buf, slash + 1, 100);
-		strncpy(buf + 345, h->path, 155);
+		len = slash - h->path;
+		memcpy(buf + 345, h->path, len);
+		memset(buf + 345 + len, 0, 155 - len);
 	} else {
 		strncpy(buf, h->path, 100);
 		memset(buf + 345, 0, 155);
