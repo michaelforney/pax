@@ -2,6 +2,8 @@ extern const char *argv0;
 
 #define ARGBEGIN \
 	for (;;) { \
+		char *opt_; \
+		int done_; \
 		if (argc > 0) \
 			++argv, --argc; \
 		if (argc == 0 || (*argv)[0] != '-') \
@@ -10,7 +12,7 @@ extern const char *argv0;
 			++argv, --argc; \
 			break; \
 		} \
-		for (char *opt_ = &(*argv)[1], done_ = 0; !done_ && *opt_; ++opt_) { \
+		for (opt_ = &(*argv)[1], done_ = 0; !done_ && *opt_; ++opt_) { \
 			switch (*opt_)
 
 #define ARGEND \

@@ -1910,7 +1910,9 @@ match(struct header *h)
 	if (patslen == 0)
 		return 1;
 	if (!dflag) {
-		for (struct dir *d = dirs; d < dirs + dirslen; ++d) {
+		struct dir *d;
+
+		for (d = dirs; d < dirs + dirslen; ++d) {
 			if (h->pathlen >= d->pathlen && memcmp(h->path, d->path, d->pathlen) == 0)
 				return !cflag;
 		}
