@@ -1788,7 +1788,10 @@ writefile(FILE *unused, struct header *h)
 	if (vflag)
 		fprintf(stderr, "%s\n", h->path);
 	if (lflag && h->file && h->type != DIRTYPE) {
-		if (linkat(AT_FDCWD, h->file, destfd, h->path, h->flag) == 0)
+		flags = 0;
+		if (!(h->flag & AT_SYMLINK_NOFOLLOW))
+			flags |= AT_SYMLINK_FOLLOW;
+		if (linkat(AT_FDCWD, h->file, destfd, h->path, flags) == 0)
 			return;
 	}
 	retry = 1;
