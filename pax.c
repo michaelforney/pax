@@ -557,6 +557,23 @@ octnum(const char *str, size_t len)
 }
 
 static unsigned long long
+gnuoctnum(const char *str, size_t len)
+{
+	const unsigned char *pos, *end;
+	unsigned long long n;
+
+	pos = (unsigned char *)str;
+	if (*pos != 0x80 && *pos != 0xFF)
+		return octnum(str, len);
+	/* GNU binary field, see https://www.gnu.org/software/tar/manual/tar.html#Extensions */
+	n = *pos == 0xFF ? -1ull : 0;
+	end = pos + len;
+	while (++pos < end)
+		n = n << 8 | *pos;
+	return n;
+}
+
+static unsigned long long
 decnum(const char *str, size_t len, char **pos)
 {
 	const char *end;
@@ -625,17 +642,17 @@ readustar(struct bufio *f, struct header *h)
 	}
 	h->dev = 0;
 	h->ino = 0;
-	h->mode = octnum(buf + 100, 8);
-	h->uid = octnum(buf + 108, 8);
-	h->gid = octnum(buf + 116, 8);
+	h->mode = gnuoctnum(buf + 100, 8);
+	h->uid = gnuoctnum(buf + 108, 8);
+	h->gid = gnuoctnum(buf + 116, 8);
 	h->nlink = 1;
-	h->size = octnum(buf + 124, 12);
+	h->size = gnuoctnum(buf + 124, 12);
 	end = bioin.off + ROUNDUP(h->size, 512);
-	h->mtime = (struct timespec){.tv_sec = octnum(buf + 136, 12)};
+	h->mtime = (struct timespec){.tv_sec = gnuoctnum(buf + 136, 12)};
 	if (format == GNUTAR) {
 		h->fields |= ATIME | CTIME;
-		h->atime = (struct timespec){.tv_sec = octnum(buf + 345, 12)};
-		h->ctime = (struct timespec){.tv_sec = octnum(buf + 357, 12)};
+		h->atime = (struct timespec){.tv_sec = gnuoctnum(buf + 345, 12)};
+		h->ctime = (struct timespec){.tv_sec = gnuoctnum(buf + 357, 12)};
 	}
 	h->type = buf[156];
 	if (h->type == AREGTYPE)
@@ -667,8 +684,8 @@ readustar(struct bufio *f, struct header *h)
 		if (h->type == CHRTYPE || h->type == BLKTYPE) {
 			unsigned major, minor;
 
-			major = octnum(buf + 329, 8);
-			minor = octnum(buf + 337, 8);
+			major = gnuoctnum(buf + 329, 8);
+			minor = gnuoctnum(buf + 337, 8);
 			h->rdev = makedev(major, minor);
 		}
 	}
