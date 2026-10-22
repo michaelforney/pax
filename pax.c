@@ -2238,7 +2238,7 @@ main(int argc, char *argv[])
 		} else if (strcmp(format, "pax") == 0) {
 			writehdr = writepax;
 			if (globexthdr.fields)
-				writeexthdr(stdout, 'g', &globexthdr);
+				writeexthdr(out, 'g', &globexthdr);
 		} else if (strcmp(format, "cpio") == 0) {
 			writehdr = writecpio;
 		} else {
