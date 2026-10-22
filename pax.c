@@ -1611,21 +1611,23 @@ next:
 		break;
 	case S_IFDIR:
 		h->type = DIRTYPE;
-		dir = opendir(h->path);
-		if (!dir)
-			fatal("opendir %s:", h->path);
-		for (;;) {
-			errno = 0;
-			d = readdir(dir);
-			if (!d)
-				break;
-			if (strcmp(d->d_name, ".") == 0 || strcmp(d->d_name, "..") == 0)
-				continue;
-			filepush(&files, d->d_name, path.len, st.st_dev);
+		if (!dflag) {
+			dir = opendir(h->path);
+			if (!dir)
+				fatal("opendir %s:", h->path);
+			for (;;) {
+				errno = 0;
+				d = readdir(dir);
+				if (!d)
+					break;
+				if (strcmp(d->d_name, ".") == 0 || strcmp(d->d_name, "..") == 0)
+					continue;
+				filepush(&files, d->d_name, path.len, st.st_dev);
+			}
+			if (errno != 0)
+				fatal("readdir %s:", h->path);
+			closedir(dir);
 		}
-		if (errno != 0)
-			fatal("readdir %s:", h->path);
-		closedir(dir);
 		break;
 	case S_IFIFO:
 		h->type = FIFOTYPE;
