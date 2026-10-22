@@ -1490,7 +1490,7 @@ writecpio(FILE *f, struct header *h)
 }
 
 static void
-filepush(struct filelist *files, const char *name, size_t pathlen, dev_t dev)
+fileadd(struct file ***end, const char *name, size_t pathlen, dev_t dev)
 {
 	struct file *f;
 	size_t namelen;
@@ -1503,8 +1503,9 @@ filepush(struct filelist *files, const char *name, size_t pathlen, dev_t dev)
 	f->namelen = namelen;
 	f->pathlen = pathlen;
 	f->dev = dev;
-	f->next = files->pending;
-	files->pending = f;
+	f->next = **end;
+	**end = f;
+	*end = &f->next;
 }
 
 static int
@@ -1612,9 +1613,12 @@ next:
 	case S_IFDIR:
 		h->type = DIRTYPE;
 		if (!dflag) {
+			struct file **end;
+
 			dir = opendir(h->path);
 			if (!dir)
 				fatal("opendir %s:", h->path);
+			end = &files.pending;
 			for (;;) {
 				errno = 0;
 				d = readdir(dir);
@@ -1622,7 +1626,7 @@ next:
 					break;
 				if (strcmp(d->d_name, ".") == 0 || strcmp(d->d_name, "..") == 0)
 					continue;
-				filepush(&files, d->d_name, path.len, st.st_dev);
+				fileadd(&end, d->d_name, path.len, st.st_dev);
 			}
 			if (errno != 0)
 				fatal("readdir %s:", h->path);
@@ -2263,10 +2267,13 @@ main(int argc, char *argv[])
 		break;
 	}
 	if (mode & WRITE) {
+		struct file **end;
+
 		readhdr = readfile;
 		bioin.fd = -1;
+		end = &files.pending;
 		for (i = 0; i < argc; ++i)
-			filepush(&files, argv[i], 0, 0);
+			fileadd(&end, argv[i], 0, 0);
 		if (argc == 0)
 			files.input = stdin;
 	}
