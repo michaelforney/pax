@@ -1841,6 +1841,8 @@ writefile(FILE *unused, struct header *h)
 		openfile(h);
 		copy(&bioin, h->size, f, h->size);
 		closefile(h);
+		if (fflush(f) != 0)
+			fatal("flush %s:", h->path);
 		fclose(f);
 		break;
 	case LNKTYPE:
@@ -2291,7 +2293,7 @@ main(int argc, char *argv[])
 	writehdr(out, NULL);
 	if (out) {
 		if (fflush(out) != 0)
-			fatal("write:");
+			fatal("flush:");
 		fclose(out);
 	}
 	for (i = 0; i < patslen; ++i) {
