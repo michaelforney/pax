@@ -1866,6 +1866,8 @@ retry:
 					goto preserve;
 				if (h->type == FIFOTYPE && S_ISFIFO(st.st_mode))
 					goto preserve;
+				if (lflag && h->file && h->dev == st.st_dev && h->ino == st.st_ino)
+					return;
 				if (kflag)
 					break;
 				if (unlinkat(destfd, h->path, S_ISDIR(st.st_mode) ? AT_REMOVEDIR : 0) != 0)
