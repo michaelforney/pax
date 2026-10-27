@@ -1796,7 +1796,7 @@ mkdirp(int fd, char *name, size_t len)
 static void
 writefile(FILE *unused, struct header *h)
 {
-	int fd, retry, flags;
+	int fd, retry;
 	struct stat st;
 	mode_t mode;
 	int ret;
@@ -1811,16 +1811,18 @@ writefile(FILE *unused, struct header *h)
 	}
 	if (vflag)
 		fprintf(stderr, "%s\n", h->path);
-	if (lflag && h->file && h->type != DIRTYPE) {
-		flags = 0;
-		if (!(h->flag & AT_SYMLINK_NOFOLLOW))
-			flags |= AT_SYMLINK_FOLLOW;
-		if (linkat(AT_FDCWD, h->file, destfd, h->path, flags) == 0)
-			return;
-	}
 	mode = h->mode & ~(S_ISUID | S_ISGID);
 	retry = 1;
 retry:
+	if (lflag && h->file && h->type != DIRTYPE) {
+		int flag;
+
+		flag = h->flag & AT_SYMLINK_NOFOLLOW ? 0 : AT_SYMLINK_FOLLOW;
+		if (linkat(AT_FDCWD, h->file, destfd, h->path, flag) == 0)
+			return;
+		if (errno != EXDEV)
+			goto fail;
+	}
 	switch (h->type) {
 	case REGTYPE:
 		op = "open";
@@ -1852,6 +1854,7 @@ retry:
 		fatal("unknown file type %d", h->type);
 	}
 	if (ret != 0) {
+	fail:
 		if (retry) {
 			retry = 0;
 			switch (errno) {
