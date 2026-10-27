@@ -1803,7 +1803,7 @@ writefile(FILE *unused, struct header *h)
 
 	if (!h)
 		return;
-	if (uflag && fstatat(destfd, h->path, &st, 0) == 0) {
+	if (uflag && fstatat(destfd, h->path, &st, AT_SYMLINK_NOFOLLOW) == 0) {
 		if (h->mtime.tv_sec < st.st_mtime || (h->mtime.tv_sec == st.st_mtime
 		 && h->mtime.tv_nsec < st.st_mtim.tv_nsec))
 			return;
@@ -1873,7 +1873,7 @@ writefile(FILE *unused, struct header *h)
 			if (retry && errno == ENOENT)
 				goto retry;
 			if (errno == EEXIST) {
-				if (fstatat(destfd, h->path, &st, 0) == 0 && S_ISDIR(st.st_mode))
+				if (fstatat(destfd, h->path, &st, AT_SYMLINK_NOFOLLOW) == 0 && S_ISDIR(st.st_mode))
 					break;
 				errno = EEXIST;
 			}
@@ -1885,7 +1885,7 @@ writefile(FILE *unused, struct header *h)
 			if (retry && errno == ENOENT)
 				goto retry;
 			if (errno == EEXIST) {
-				if (fstatat(destfd, h->path, &st, 0) == 0 && S_ISFIFO(st.st_mode))
+				if (fstatat(destfd, h->path, &st, AT_SYMLINK_NOFOLLOW) == 0 && S_ISFIFO(st.st_mode))
 					break;
 				errno = EEXIST;
 			}
@@ -1909,7 +1909,7 @@ writefile(FILE *unused, struct header *h)
 
 		uid = preserve & UID ? unametouid(h->uname, h->uid) : -1;
 		gid = preserve & GID ? gnametogid(h->gname, h->gid) : -1;
-		if (fchownat(destfd, h->path, uid, gid, 0) != 0) {
+		if (fchownat(destfd, h->path, uid, gid, AT_SYMLINK_NOFOLLOW) != 0) {
 			fprintf(stderr, "chown %s%s: %s\n", dest, h->path, strerror(errno));
 			exitstatus = 1;
 		} else {
@@ -1918,7 +1918,7 @@ writefile(FILE *unused, struct header *h)
 		}
 	}
 	if (preserve & MODE && h->type != SYMTYPE) {
-		if (fchmodat(destfd, h->path, mode, 0) != 0) {
+		if (fchmodat(destfd, h->path, mode, AT_SYMLINK_NOFOLLOW) != 0) {
 			fprintf(stderr, "chmod %s%s: %s\n", dest, h->path, strerror(errno));
 			exitstatus = 1;
 		}
