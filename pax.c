@@ -1796,10 +1796,11 @@ mkdirp(int fd, char *name, size_t len)
 static void
 writefile(FILE *unused, struct header *h)
 {
-	FILE *f;
 	int fd, retry, flags;
 	struct stat st;
 	mode_t mode;
+	int ret;
+	const char *op;
 
 	if (!h)
 		return;
@@ -1817,24 +1818,67 @@ writefile(FILE *unused, struct header *h)
 		if (linkat(AT_FDCWD, h->file, destfd, h->path, flags) == 0)
 			return;
 	}
-	retry = 1;
-	if (0) {
-	retry:
-		retry = 0;
-		mkdirp(destfd, h->path, h->pathlen);
-	}
 	mode = h->mode & ~(S_ISUID | S_ISGID);
+	retry = 1;
+retry:
 	switch (h->type) {
 	case REGTYPE:
-		flags = O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC;
-		if (kflag)
-			flags |= O_EXCL;
-		fd = openat(destfd, h->path, flags, mode);
-		if (fd < 0) {
-			if (retry && errno == ENOENT)
+		op = "open";
+		fd = openat(destfd, h->path, O_WRONLY|O_CREAT|O_CLOEXEC|O_EXCL, mode);
+		ret = fd < 0 ? -1 : 0;
+		break;
+	case LNKTYPE:
+		op = "link";
+		ret = linkat(destfd, h->link, destfd, h->path, 0);
+		break;
+	case SYMTYPE:
+		op = "symlink";
+		ret = symlinkat(h->link, destfd, h->path);
+		break;
+	case CHRTYPE:
+	case BLKTYPE:
+		op = "mknod";
+		mode |= h->type == CHRTYPE ? S_IFCHR : S_IFBLK;
+		ret = mknodat(destfd, h->path, mode, h->rdev);
+		break;
+	case DIRTYPE:
+		op = "mkdir";
+		ret = mkdirat(destfd, h->path, mode);
+		break;
+	case FIFOTYPE:
+		ret = mkfifoat(destfd, h->path, mode);
+		break;
+	default:
+		fatal("unknown file type %d", h->type);
+	}
+	if (ret != 0) {
+		if (retry) {
+			retry = 0;
+			switch (errno) {
+			case EEXIST:
+				/* file already exists */
+				if (fstatat(destfd, h->path, &st, AT_SYMLINK_NOFOLLOW) != 0)
+					fatal("stat %s:", h->path);
+				if (h->type == DIRTYPE && S_ISDIR(st.st_mode))
+					goto preserve;
+				if (h->type == FIFOTYPE && S_ISFIFO(st.st_mode))
+					goto preserve;
+				if (kflag)
+					break;
+				if (unlinkat(destfd, h->path, S_ISDIR(st.st_mode) ? AT_REMOVEDIR : 0) != 0)
+					fatal("unlink %s:", h->path);
 				goto retry;
-			fatal("open %s%s:", dest, h->path);
+			case ENOENT:
+				/* missing parent directory */
+				mkdirp(destfd, h->path, h->pathlen);
+				goto retry;
+			}
 		}
+		fatal("%s %s%s:", op, dest, h->path);
+	}
+	if (h->type == REGTYPE) {
+		FILE *f;
+
 		f = fdopen(fd, "w");
 		if (!f)
 			fatal("open %s:", h->path);
@@ -1844,55 +1888,8 @@ writefile(FILE *unused, struct header *h)
 		if (fflush(f) != 0)
 			fatal("flush %s:", h->path);
 		fclose(f);
-		break;
-	case LNKTYPE:
-		if (linkat(destfd, h->link, destfd, h->path, 0) != 0) {
-			if (retry && errno == ENOENT)
-				goto retry;
-			fatal("link %s%s:", dest, h->path);
-		}
-		break;
-	case SYMTYPE:
-		if (symlinkat(h->link, destfd, h->path) != 0) {
-			if (retry && errno == ENOENT)
-				goto retry;
-			fatal("symlink %s%s:", dest, h->path);
-		}
-		break;
-	case CHRTYPE:
-	case BLKTYPE:
-		mode |= h->type == CHRTYPE ? S_IFCHR : S_IFBLK;
-		if (mknodat(destfd, h->path, mode, h->rdev) != 0) {
-			if (retry && errno == ENOENT)
-				goto retry;
-			fatal("mknod %s%s:", dest, h->path);
-		}
-		break;
-	case DIRTYPE:
-		if (mkdirat(destfd, h->path, mode) != 0) {
-			if (retry && errno == ENOENT)
-				goto retry;
-			if (errno == EEXIST) {
-				if (fstatat(destfd, h->path, &st, AT_SYMLINK_NOFOLLOW) == 0 && S_ISDIR(st.st_mode))
-					break;
-				errno = EEXIST;
-			}
-			fatal("mkdir %s%s:", dest, h->path);
-		}
-		break;
-	case FIFOTYPE:
-		if (mkfifoat(destfd, h->path, mode) != 0) {
-			if (retry && errno == ENOENT)
-				goto retry;
-			if (errno == EEXIST) {
-				if (fstatat(destfd, h->path, &st, AT_SYMLINK_NOFOLLOW) == 0 && S_ISFIFO(st.st_mode))
-					break;
-				errno = EEXIST;
-			}
-			fatal("mkfifo %s%s:", dest, h->path);
-		}
-		break;
 	}
+preserve:
 	if (preserve & (ATIME | MTIME)) {
 		struct timespec ts[2];
 
