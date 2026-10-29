@@ -231,6 +231,7 @@ static size_t patslen;
 static bool *patsused;
 static struct filelist files;
 static struct bufio bioin;
+static off_t nextoff;  /* offset of next archive member */
 static char *dest = "";
 static int destfd = AT_FDCWD;
 
@@ -379,14 +380,18 @@ bioskip(struct bufio *f, off_t n)
 		l = f->end - f->pos;
 		if (n < l) {
 			f->pos += n;
+			f->off += n;
 			return 0;
 		}
 		n -= l;
 		f->pos = f->end = f->buf;
+		f->off += l;
 	}
 	if (!seekfail) {
-		if (n == 0 || lseek(f->fd, n, SEEK_CUR) >= 0)
+		if (n == 0 || lseek(f->fd, n, SEEK_CUR) >= 0) {
+			f->off += n;
 			return 0;
+		}
 		seekfail = true;
 	}
 	for (; n > 0; n -= r) {
@@ -396,6 +401,7 @@ bioskip(struct bufio *f, off_t n)
 		r = read(f->fd, f->buf, l);
 		if (r <= 0)
 			return -1;
+		f->off += r;
 	}
 	return 0;
 }
@@ -597,14 +603,14 @@ static int
 readustar(struct bufio *f, struct header *h)
 {
 	static char buf[512];
-	static off_t end;
 	size_t namelen, prefixlen, linklen;
 	unsigned long sum;
 	int i;
 	enum format format;
 
-	assert(bioin.off <= end);
-	if (bioskip(f, end - bioin.off) != 0 || bioread(f, buf, sizeof buf) != sizeof buf) {
+	assert(bioin.off <= nextoff);
+	nextoff = ROUNDUP(nextoff, 512);
+	if (bioskip(f, nextoff - bioin.off) != 0 || bioread(f, buf, sizeof buf) != sizeof buf) {
 		if (f->err)
 			fatal("read: %s", strerror(f->err));
 		fatal("archive truncated");
@@ -647,7 +653,6 @@ readustar(struct bufio *f, struct header *h)
 	h->gid = gnuoctnum(buf + 116, 8);
 	h->nlink = 1;
 	h->size = gnuoctnum(buf + 124, 12);
-	end = bioin.off + ROUNDUP(h->size, 512);
 	h->mtime = (struct timespec){.tv_sec = gnuoctnum(buf + 136, 12)};
 	if (format == GNUTAR) {
 		h->fields |= ATIME | CTIME;
@@ -852,6 +857,7 @@ readpax(struct bufio *f, struct header *h)
 {
 	exthdr.fields = exthdr.delete;
 	while (readustar(f, h)) {
+		nextoff = f->off + h->size;
 		switch (h->type) {
 		case 'g':
 			readexthdr(f, &globexthdr, h->size);
@@ -885,11 +891,11 @@ readpax(struct bufio *f, struct header *h)
 static int
 readcpio(struct bufio *f, struct header *h)
 {
-	static off_t end;
 	unsigned long type;
 	char buf[76];
 
-	if (bioskip(f, end - bioin.off) != 0 || bioread(f, buf, sizeof buf) != sizeof buf) {
+	assert(bioin.off <= nextoff);
+	if (bioskip(f, nextoff - bioin.off) != 0 || bioread(f, buf, sizeof buf) != sizeof buf) {
 		if (f->err)
 			fatal("read: %s", strerror(f->err));
 		fatal("archive truncated");
@@ -953,7 +959,6 @@ readcpio(struct bufio *f, struct header *h)
 		h->link = "";
 		h->linklen = 0;
 	}
-	end = bioin.off + h->size;
 	return 1;
 }
 
@@ -2286,6 +2291,7 @@ main(int argc, char *argv[])
 	while (readhdr(&bioin, &hdr)) {
 		mergehdr(&hdr, &exthdr, ~0);
 		mergehdr(&hdr, &globexthdr, ~exthdr.fields);
+		nextoff = bioin.off + hdr.size;
 		if (match(&hdr)) {
 			replace(&hdr);
 			if (*hdr.path)
