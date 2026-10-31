@@ -1641,6 +1641,9 @@ next:
 	case S_IFIFO:
 		h->type = FIFOTYPE;
 		break;
+	default:
+		fprintf(stderr, "skipping unsupported file %s", h->path);
+		goto next;
 	}
 	return 1;
 }
